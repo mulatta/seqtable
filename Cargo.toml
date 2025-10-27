@@ -1,0 +1,26 @@
+[package]
+name = "seqtable"
+version = "0.1.0"
+edition = "2021"
+authors = ["Seungwon Lee lsw1167@gmail.com>"]
+description = "High-performance parallel FASTA/FASTQ sequence counter"
+license = "MIT"
+repository = "https://github.com/mulatta/seqtable"
+homepage = "https://github.com/mulatta/seqtable"
+documentation = "https://docs.rs/seqtable"
+readme = "README.md"
+keywords = ["bioinformatics", "fasta", "fastq", "sequence", "parquet"]
+categories = ["science", "command-line-utilities"]
+
+[dependencies]
+needletail = "0.5"
+rayon = "1.8"
+arrow = "53.0"
+parquet = "53.0"
+flate2 = "1.0"
+ahash = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.17"
+anyhow = "1.0"
+csv = "1.4.0"
+num_cpus = "1.17.0"

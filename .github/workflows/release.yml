@@ -1,0 +1,210 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            nix-system: x86_64-linux
+            artifact-name: seqtable-linux-x86_64
+            use-qemu: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            nix-system: aarch64-linux
+            artifact-name: seqtable-linux-aarch64
+            use-qemu: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            nix-system: x86_64-darwin
+            artifact-name: seqtable-macos-x86_64
+            use-qemu: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            nix-system: aarch64-darwin
+            artifact-name: seqtable-macos-aarch64
+            use-qemu: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Free up disk space (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "Disk space after cleanup:"
+          df -h
+      - name: Set up QEMU
+        if: matrix.use-qemu == true
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            max-jobs = auto
+            cores = 0
+            ${{ matrix.use-qemu == true && 'extra-platforms = aarch64-linux' || '' }}
+      - name: Setup Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: Check flake
+        run: nix flake check --show-trace
+      - name: Build binary
+        run: |
+          echo "Building for ${{ matrix.nix-system }}"
+          nix build .#packages.${{ matrix.nix-system }}.seqtable \
+            --print-build-logs \
+            --show-trace
+
+          # Copy binary to workspace
+          cp result/bin/seqtable seqtable-${{ matrix.target }}
+          chmod +x seqtable-${{ matrix.target }}
+      - name: Verify binary
+        run: |
+          file seqtable-${{ matrix.target }}
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=$(git describe --tags --always --dirty)
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+      - name: Create archive
+        run: |
+          tar -czf ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz \
+            seqtable-${{ matrix.target }}
+
+          # Create checksum
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            shasum -a 256 ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz \
+              > ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
+          else
+            sha256sum ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz \
+              > ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: |
+            ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz
+            ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
+          retention-days: 7
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Get version and changelog
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          # Extract changelog for this version (if exists)
+          if [ -f CHANGELOG.md ]; then
+            awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | \
+              sed '1d;$d' > release-notes.md || echo "" > release-notes.md
+          else
+            echo "Release ${VERSION}" > release-notes.md
+          fi
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) \
+            -exec cp {} release-assets/ \;
+          ls -lh release-assets/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'beta') }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish-crate:
+    name: Publish to crates.io
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, 'rc') && !contains(github.ref, 'beta')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) doesn't match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "Version check passed: $CARGO_VERSION"
+      - name: Check if already published
+        id: check_published
+        run: |
+          CRATE_NAME=$(grep -m1 '^name' Cargo.toml | cut -d'"' -f2)
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+
+          if cargo search "$CRATE_NAME" --limit 1 | grep -q "^$CRATE_NAME = \"$TAG_VERSION\""; then
+            echo "already_published=true" >> $GITHUB_OUTPUT
+            echo "Version $TAG_VERSION is already published"
+          else
+            echo "already_published=false" >> $GITHUB_OUTPUT
+            echo "Version $TAG_VERSION is not yet published"
+          fi
+      - name: Publish to crates.io
+        if: steps.check_published.outputs.already_published != 'true'
+        run: |
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --allow-dirty
+        continue-on-error: false
+      - name: Wait for crates.io
+        if: steps.check_published.outputs.already_published != 'true'
+        run: |
+          echo "Waiting for crates.io to index the new version..."
+          sleep 30
