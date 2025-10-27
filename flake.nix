@@ -1,5 +1,5 @@
 {
-  description = "Sequence Counter";
+  description = "seqtable - Blazingly Fast Sequence Count Table generator";
 
   outputs = inputs @ {flake-parts, ...}:
     flake-parts.lib.mkFlake {inherit inputs;} {
@@ -7,9 +7,9 @@
 
       imports = [
         ./nix/packages.nix
+        ./nix/overlays.nix
         ./nix/shell.nix
         ./nix/formatter.nix
-        # ./nix/overlays.nix
       ];
 
       perSystem = {
@@ -38,6 +38,8 @@
     # keep-sorted start
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    gitignore.inputs.nixpkgs.follows = "nixpkgs";
+    gitignore.url = "github:hercules-ci/gitignore.nix";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     rust-overlay.url = "github:oxalica/rust-overlay";
