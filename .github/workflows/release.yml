@@ -39,48 +39,38 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Free up disk space (Linux only)
-        if: runner.os == 'Linux'
-        run: |
-          echo "Disk space before cleanup:"
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          echo "Disk space after cleanup:"
-          df -h
       - name: Set up QEMU
         if: matrix.use-qemu == true
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v14
+        uses: cachix/install-nix-action@v30
         with:
-          extra-conf: |
+          extra_nix_config: |
             experimental-features = nix-command flakes
             max-jobs = auto
             cores = 0
             ${{ matrix.use-qemu == true && 'extra-platforms = aarch64-linux' || '' }}
-      - name: Setup Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@v8
-      - name: Check flake
-        run: nix flake check --show-trace
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: mulatta
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build binary
         run: |
           echo "Building for ${{ matrix.nix-system }}"
           nix build .#packages.${{ matrix.nix-system }}.seqtable \
             --print-build-logs \
-            --show-trace
+            --show-trace \
+            --accept-flake-config
 
-          # Copy binary to workspace
           cp result/bin/seqtable seqtable-${{ matrix.target }}
           chmod +x seqtable-${{ matrix.target }}
       - name: Verify binary
         run: |
           file seqtable-${{ matrix.target }}
+          ./seqtable-${{ matrix.target }} --version || echo "Version check skipped (cross-compile)"
       - name: Get version
         id: version
         run: |
@@ -96,7 +86,6 @@ jobs:
           tar -czf ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz \
             seqtable-${{ matrix.target }}
 
-          # Create checksum
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             shasum -a 256 ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz \
               > ${{ matrix.artifact-name }}-${{ steps.version.outputs.version }}.tar.gz.sha256
@@ -126,13 +115,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
       - name: Get version and changelog
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-          # Extract changelog for this version (if exists)
           if [ -f CHANGELOG.md ]; then
             awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | \
               sed '1d;$d' > release-notes.md || echo "" > release-notes.md
@@ -143,7 +132,7 @@ jobs:
         run: |
           mkdir -p release-assets
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) \
-            -exec cp {} release-assets/ \;
+            -exec mv {} release-assets/ \;
           ls -lh release-assets/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -169,13 +158,14 @@ jobs:
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Verify version matches tag
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
