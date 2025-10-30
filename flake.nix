@@ -1,6 +1,11 @@
 {
   description = "seqtable - Blazingly Fast Sequence Count Table generator";
 
+  nixConfig = {
+    extra-substituters = ["https://mulatta.cachix.org"];
+    extra-trusted-public-keys = ["mulatta.cachix.org-1:fh++Q+sBr+s6+/SNiaXXc8cCsKeAvb5oxP8fG06eDBE="];
+  };
+
   outputs = inputs @ {flake-parts, ...}:
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = import inputs.systems;
