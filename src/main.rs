@@ -16,7 +16,7 @@ use output::{OutputFormat, SequenceRecord};
 #[derive(Parser, Debug)]
 #[command(name = "seqtable")]
 #[command(author = "Seungwon Lee")]
-#[command(version = "0.1.0")]
+#[command(version = "0.1.1")]
 #[command(about = "High performance FASTA/FASTQ sequence count table generator", long_about = None)]
 struct Args {
     /// Input file path(s) - FASTA/FASTQ/FASTQ.gz formats supported
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
 
     // Print header (respect quiet flag)
     if !args.quiet {
-        println!("🧬 seqtable v0.1.0");
+        println!("🧬 seqtable v0.1.1");
         println!("📁 Input files: {}", args.input.len());
         println!("🧵 Threads per file: {}", rayon::current_num_threads());
         println!("📊 Output format: {:?}", args.format);

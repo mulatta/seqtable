@@ -8,7 +8,7 @@
     packages = {
       seqtable = pkgs.rustPlatform.buildRustPackage {
         pname = "seqtable";
-        version = "0.1.0";
+        version = "0.1.1";
 
         src = inputs.gitignore.lib.gitignoreSource ../.;
 

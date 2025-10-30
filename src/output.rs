@@ -1,6 +1,6 @@
 use crate::Args;
 use anyhow::{Context, Result};
-use arrow::array::{Float64Array, StringArray, UInt64Array};
+use arrow::array::{Float64Array, LargeStringArray, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use clap::ValueEnum;
@@ -61,7 +61,7 @@ pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) 
 fn save_parquet(records: &[SequenceRecord], output_path: &Path, compression: &str) -> Result<()> {
     // Define schema
     let mut fields = vec![
-        Field::new("sequence", DataType::Utf8, false),
+        Field::new("sequence", DataType::LargeUtf8, false),
         Field::new("count", DataType::UInt64, false),
     ];
 
@@ -81,7 +81,7 @@ fn save_parquet(records: &[SequenceRecord], output_path: &Path, compression: &st
         counts.push(record.count);
     }
 
-    let seq_array = StringArray::from(sequences);
+    let seq_array = LargeStringArray::from(sequences);
     let count_array = UInt64Array::from(counts);
 
     // Build arrays
