@@ -31,11 +31,7 @@ struct Args {
     #[arg(short = 'f', long, default_value = "parquet")]
     format: OutputFormat,
 
-    /// Chunk size for memory/speed tradeoff (0 = auto)
-    #[arg(short, long, default_value = "0")]
-    chunk_size: usize,
-
-    /// Number of threads to use (0 = auto-detect, considering parallel jobs)
+    /// Number of threads to use (0 = auto-detect)
     #[arg(short, long, default_value = "0")]
     threads: usize,
 
@@ -104,9 +100,6 @@ fn main() -> Result<()> {
         if args.rpm {
             eprintln!("📈 RPM calculation: enabled");
         }
-        if args.chunk_size == 0 {
-            eprintln!("🎯 Adaptive chunking: enabled");
-        }
         eprintln!();
     }
 
@@ -160,11 +153,7 @@ fn calculate_optimal_threads(requested: usize) -> usize {
 }
 
 /// Calculate adaptive chunk size based on estimated file size
-fn calculate_chunk_size(file_size: u64, requested: usize) -> usize {
-    if requested > 0 {
-        return requested;
-    }
-
+fn calculate_chunk_size(file_size: u64) -> usize {
     // Estimate number of records (assuming ~100 bytes per record)
     let estimated_records = (file_size / 100).max(100);
 
@@ -217,18 +206,7 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
 
     // Get file size for adaptive chunk size calculation
     let file_size = std::fs::metadata(input_path)?.len();
-    let chunk_size = calculate_chunk_size(file_size, args.chunk_size);
-
-    if !args.quiet && args.chunk_size == 0 {
-        eprintln!(
-            "   🎯 Adaptive chunk size: {}",
-            if chunk_size == 0 {
-                "disabled (small file)".to_string()
-            } else {
-                format!("{} sequences", chunk_size)
-            }
-        );
-    }
+    let chunk_size = calculate_chunk_size(file_size);
 
     // Count sequences
     let (counts, total_reads) = count_sequences(input_path, chunk_size, !args.quiet)?;
