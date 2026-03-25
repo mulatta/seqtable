@@ -2,6 +2,7 @@
   perSystem = {
     config,
     pkgs,
+    lib,
     ...
   }: {
     devShells.default = pkgs.mkShell {
@@ -15,20 +16,23 @@
           rust-analyzer
           cargo-flamegraph
           cargo-bloat
-          mold
           just
 
           # Build tools
           pkg-config
         ]
+        ++ lib.optionals stdenv.isLinux [mold]
         ++ [(python3.withPackages (ps: [ps.polars ps.ipython])) config.packages.seqtable];
 
-      shellHook = ''
-        export ROOT=$(git rev-parse --show-toplevel)
-        export CARGO_HOME="$ROOT/.cargo"
-        export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
-        export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}";
-      '';
+      shellHook =
+        ''
+          export ROOT=$(git rev-parse --show-toplevel)
+          export CARGO_HOME="$ROOT/.cargo"
+          export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}";
+        ''
+        + lib.optionalString pkgs.stdenv.isLinux ''
+          export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+        '';
     };
   };
 }
