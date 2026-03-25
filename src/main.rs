@@ -12,14 +12,14 @@ use std::time::Instant;
 mod output;
 use output::{OutputFormat, SequenceRecord};
 
-/// High-performance FASTA/FASTQ sequence counter with parallel processing
+/// High-performance FASTQ sequence counter with parallel processing
 #[derive(Parser, Debug)]
 #[command(name = "seqtable")]
 #[command(author = "Seungwon Lee")]
 #[command(version = "0.1.0")]
-#[command(about = "High performance FASTA/FASTQ sequence count table generator", long_about = None)]
+#[command(about = "High performance FASTQ sequence count table generator", long_about = None)]
 struct Args {
-    /// Input file path(s) - FASTA/FASTQ/FASTQ.gz formats supported
+    /// Input FASTQ file path(s) (.fastq, .fq, .fastq.gz, .fq.gz)
     #[arg(required = true)]
     input: Vec<PathBuf>,
 
@@ -126,7 +126,21 @@ fn calculate_chunk_size(file_size: u64) -> usize {
     }
 }
 
+const FASTQ_EXTENSIONS: &[&str] = &[".fastq.gz", ".fq.gz", ".fastq", ".fq"];
+
+fn validate_fastq(path: &Path) -> Result<()> {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let is_fastq = FASTQ_EXTENSIONS.iter().any(|ext| name.ends_with(ext));
+    anyhow::ensure!(
+        is_fastq,
+        "Unsupported file format: {}\nExpected FASTQ (.fastq, .fq, .fastq.gz, .fq.gz)",
+        path.display()
+    );
+    Ok(())
+}
+
 fn process_file(input_path: &Path, args: &Args) -> Result<()> {
+    validate_fastq(input_path)?;
     let start_time = Instant::now();
 
     if !args.quiet {
@@ -139,19 +153,8 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("output");
-        // Strip known extensions in order (longest first to avoid partial matches)
-        let suffixes = [
-            ".fastq.gz",
-            ".fasta.gz",
-            ".fq.gz",
-            ".fa.gz",
-            ".fastq",
-            ".fasta",
-            ".fq",
-            ".fa",
-        ];
         let mut base = name;
-        for suffix in &suffixes {
+        for suffix in FASTQ_EXTENSIONS {
             if let Some(stripped) = base.strip_suffix(suffix) {
                 base = stripped;
                 break;
