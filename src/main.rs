@@ -78,12 +78,10 @@ impl ParquetCompression {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Configure thread pool with intelligent defaults
-    let num_threads = calculate_optimal_threads(args.threads);
-
-    if num_threads > 0 {
+    // Configure thread pool (0 = rayon default, uses all cores or RAYON_NUM_THREADS)
+    if args.threads > 0 {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
+            .num_threads(args.threads)
             .build_global()
             .context("Failed to initialize thread pool")?;
     }
@@ -112,44 +110,6 @@ fn main() -> Result<()> {
         eprintln!("\n✅ All files processed successfully!");
     }
     Ok(())
-}
-
-/// Calculate optimal thread count based on system resources and parallel jobs
-fn calculate_optimal_threads(requested: usize) -> usize {
-    if requested > 0 {
-        return requested;
-    }
-
-    // Check for RAYON_NUM_THREADS environment variable (set by user or parallel)
-    if let Ok(env_threads) = std::env::var("RAYON_NUM_THREADS") {
-        if let Ok(n) = env_threads.parse::<usize>() {
-            return n;
-        }
-    }
-
-    // Detect if running under GNU parallel or similar
-    let total_cores = num_cpus::get();
-
-    // Check for common parallel execution indicators
-    let parallel_jobs = std::env::var("PARALLEL_SEQ")
-        .ok()
-        .and_then(|_| {
-            // If PARALLEL_SEQ exists, we're in GNU parallel
-            // Try to get total jobs from PARALLEL environment
-            std::env::var("PARALLEL")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-        })
-        .unwrap_or(1);
-
-    if parallel_jobs > 1 {
-        // Running under parallel, divide threads
-        let threads_per_job = (total_cores / parallel_jobs).max(1);
-        return threads_per_job;
-    }
-
-    // Default: use all cores
-    total_cores
 }
 
 /// Calculate adaptive chunk size based on estimated file size
