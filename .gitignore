@@ -5,9 +5,9 @@ result/
 .cargo/
 test/
 
-# Benchmark fixtures (generated, not tracked)
-tests/fixtures/med_*.fq.gz
-tests/fixtures/large_*.fq.gz
+# Generated fixtures (benchmark, all regenerable)
+tests/fixtures/*
+!tests/fixtures/.gitkeep
 
 # Benchmark results
 benches/results/
