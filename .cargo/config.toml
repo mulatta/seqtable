@@ -10,5 +10,7 @@ debug = true
 incremental = true
 
 [profile.release]
-lto = "thin"
-codegen-units = 16
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
