@@ -40,7 +40,7 @@ struct Args {
     quiet: bool,
 
     /// Compression type for Parquet output
-    #[arg(long, default_value = "snappy")]
+    #[arg(long, default_value = "zstd")]
     compression: ParquetCompression,
 
     /// Calculate and include RPM (Reads Per Million) column
