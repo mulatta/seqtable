@@ -1,76 +1,37 @@
-{
+{inputs, ...}: {
   perSystem = {
     self',
     pkgs,
     lib,
     ...
   }: let
-    inherit (pkgs.stdenv) isLinux;
-    linkerArgs = lib.optionalString isLinux "-C link-arg=-fuse-ld=mold";
+    rustToolchain = pkgs.rust-bin.stable.latest.default;
+    craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchain;
+
+    src = craneLib.cleanCargoSource ../.;
+
+    commonArgs = {
+      inherit src;
+      pname = "seqtable";
+      version = "0.1.0";
+      nativeBuildInputs = with pkgs; [pkg-config];
+    };
+
+    # Build only dependencies (cached separately)
+    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
   in {
     packages = {
-      seqtable = pkgs.rustPlatform.buildRustPackage {
-        pname = "seqtable";
-        version = "0.1.0";
-
-        src = lib.cleanSourceWith {
-          src = ../.;
-          filter = path: _type: let
-            baseName = baseNameOf path;
-          in
-            !(lib.hasSuffix ".nix" baseName)
-            && baseName != "target"
-            && baseName != "result";
-        };
-
-        cargoLock = {
-          lockFile = ../Cargo.lock;
-        };
-
-        nativeBuildInputs = with pkgs;
-          [
-            pkg-config
-          ]
-          ++ lib.optionals pkgs.stdenv.isLinux [mold];
-
-        # Optimization flags
-        RUSTFLAGS = linkerArgs;
-
-        # Parallel jobs
-        buildPhase = ''
-          runHook preBuild
-          export CARGO_BUILD_JOBS=$NIX_BUILD_CORES
-          cargo build --release
-          runHook postBuild
-        '';
-
-        installPhase = ''
-          runHook preInstall
-          install -Dm755 target/release/seqtable $out/bin/seqtable
-          runHook postInstall
-        '';
-
-        # Tests
-        checkPhase = ''
-          runHook preCheck
-          cargo test --release
-          runHook postCheck
-        '';
-
-        doCheck = pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform;
-
-        meta = with lib; {
-          description = "High-performance parallel FASTA/FASTQ sequence counter";
-          longDescription = ''
-            A blazingly fast sequence counter for FASTA/FASTQ/FASTQ.gz files
-            with parallel processing support and Parquet output format.
-          '';
-          license = licenses.mit;
-          maintainers = [];
-          platforms = platforms.linux ++ platforms.darwin;
-          mainProgram = "seqtable";
-        };
-      };
+      seqtable = craneLib.buildPackage (commonArgs
+        // {
+          inherit cargoArtifacts;
+          doCheck = pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform;
+          meta = with lib; {
+            description = "High-performance parallel FASTQ sequence counter";
+            license = licenses.mit;
+            platforms = platforms.linux ++ platforms.darwin;
+            mainProgram = "seqtable";
+          };
+        });
 
       default = self'.packages.seqtable;
     };
