@@ -5,3 +5,7 @@ result/
 .cargo/*
 !.cargo/config.toml
 test/
+
+# Benchmark fixtures (generated, not tracked)
+tests/fixtures/med_*.fq.gz
+tests/fixtures/large_*.fq.gz
