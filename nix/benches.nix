@@ -13,13 +13,16 @@ _: {
       name = "seqtable-benchmark";
 
       runtimeInputs = with pkgs; [
-        hyperfine
-        jq
+        coreutils
+        gnugrep
         gawk
         gzip
         bc
+        hyperfine
+        jq
         parallel
         seqkit
+        util-linux # column
         self'.packages.seqtable
       ];
 

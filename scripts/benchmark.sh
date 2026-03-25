@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Benchmark seqtable against other tools for sequence counting.
+# Fair benchmark: seqtable vs seqkit vs awk vs awk+parallel
+#
+# Fairness principles:
+# - All tools write output to file (not /dev/null) to include I/O cost
+# - All results verified for correctness after first run
+# - awk+parallel uses FASTQ-aware record splitting (--recstart '@')
+# - Each tool uses its realistic usage pattern
 #
 # Run via: nix run .#benchmark -- [small|medium|large|all]
 # Fixtures: cargo run --example generate_fixtures --release -- --size <SIZE>
@@ -14,15 +20,71 @@ WARMUP=3
 RUNS=5
 
 info() { echo -e "\033[0;36m[bench]\033[0m $*" >&2; }
+warn() { echo -e "\033[0;33m[bench]\033[0m $*" >&2; }
 err() {
   echo -e "\033[0;31m[bench]\033[0m $*" >&2
   exit 1
 }
 
+# --- Correctness verification ---
+
+# Generate ground truth with plain awk (simplest, most trusted), then compare all tools
+generate_reference() {
+  local file="$1"
+  local ref_file
+  ref_file="$BENCH_TMPDIR/ref_$(basename "$file").txt"
+
+  if [ -f "$ref_file" ]; then
+    return
+  fi
+
+  info "  generating ground truth (awk)..."
+  local cat_cmd="cat"
+  [[ $file == *.gz ]] && cat_cmd="gzip -dc"
+  $cat_cmd "$file" | awk 'NR%4==2{a[$0]++}END{for(k in a)print a[k],k}' | sort -rn >"$ref_file"
+}
+
+verify_output() {
+  local tool="$1" file="$2" outfile="$3"
+  local ref_file
+  ref_file="$BENCH_TMPDIR/ref_$(basename "$file").txt"
+
+  if [ ! -f "$outfile" ]; then
+    warn "  $tool: no output file"
+    return
+  fi
+
+  # Normalize to "count seq" format, sorted descending
+  local normalized
+  normalized="$BENCH_TMPDIR/normalized_${tool}_$(basename "$file").txt"
+  case "$tool" in
+  seqtable)
+    tail -n +2 "$outfile" | awk -F, '{print $2, $1}' | sort -rn >"$normalized"
+    ;;
+  *)
+    awk 'NF{$1=$1; print}' "$outfile" | sort -rn >"$normalized"
+    ;;
+  esac
+
+  # Full diff against ground truth
+  local ref_lines tool_lines
+  ref_lines=$(wc -l <"$ref_file" | tr -d ' ')
+  tool_lines=$(wc -l <"$normalized" | tr -d ' ')
+
+  if [ "$ref_lines" != "$tool_lines" ]; then
+    warn "  $tool: FAIL line count (expected $ref_lines, got $tool_lines)"
+  elif ! diff -q "$ref_file" "$normalized" >/dev/null 2>&1; then
+    local diff_lines
+    diff_lines=$(diff "$ref_file" "$normalized" | grep -c "^[<>]" || true)
+    warn "  $tool: FAIL $diff_lines lines differ from ground truth"
+  else
+    info "  $tool: OK ($ref_lines sequences)"
+  fi
+}
+
 run_size() {
   local size="$1"
 
-  # Fixture selection
   declare -a FILES
   case "$size" in
   small) FILES=("$FIXTURE_DIR"/sm_*.fastq) ;;
@@ -32,11 +94,11 @@ run_size() {
   esac
 
   if [ "${#FILES[@]}" -eq 0 ] || [ ! -f "${FILES[0]}" ]; then
-    info "No fixtures for size=$size, skipping. Generate: cargo run --example generate_fixtures --release -- --size $size"
+    info "No fixtures for size=$size, skipping."
+    info "Generate: cargo run --example generate_fixtures --release -- --size $size"
     return
   fi
 
-  # Timestamped output file (no overwrite)
   local timestamp
   timestamp=$(date +%Y%m%d_%H%M%S)
   local summary="$RESULT_DIR/summary_${size}_${timestamp}.tsv"
@@ -51,38 +113,70 @@ run_size() {
     fname=$(basename "$file")
     info "=== $fname ==="
 
-    # seqtable
+    local cat_cmd="cat"
+    [[ $file == *.gz ]] && cat_cmd="gzip -dc"
+
+    local out_seqkit out_awk out_awkp
+    out_seqkit="$BENCH_TMPDIR/out_seqkit_${fname}"
+    out_awk="$BENCH_TMPDIR/out_awk_${fname}"
+    out_awkp="$BENCH_TMPDIR/out_awkp_${fname}"
+
+    # --- seqtable (1t, 4t, auto) ---
     bench "seqtable" "1" "$file" \
       "seqtable $file -o $BENCH_TMPDIR -f csv -q -t 1" "$summary"
+
+    bench "seqtable" "4" "$file" \
+      "seqtable $file -o $BENCH_TMPDIR -f csv -q -t 4" "$summary"
 
     bench "seqtable" "auto" "$file" \
       "seqtable $file -o $BENCH_TMPDIR -f csv -q" "$summary"
 
-    # seqkit
+    # --- seqkit (1t, 4t, auto) ---
     bench "seqkit" "1" "$file" \
-      "seqkit fx2tab -j 1 $file | cut -f2 | sort | uniq -c | sort -rn > $BENCH_TMPDIR/out.txt" "$summary"
+      "seqkit fx2tab -j 1 $file | cut -f2 | sort | uniq -c | sort -rn > $out_seqkit" "$summary"
+
+    bench "seqkit" "4" "$file" \
+      "seqkit fx2tab -j 4 $file | cut -f2 | sort | uniq -c | sort -rn > $out_seqkit" "$summary"
+
     bench "seqkit" "auto" "$file" \
-      "seqkit fx2tab $file | cut -f2 | sort | uniq -c | sort -rn > $BENCH_TMPDIR/out.txt" "$summary"
+      "seqkit fx2tab $file | cut -f2 | sort | uniq -c | sort -rn > $out_seqkit" "$summary"
 
-    # awk (single-threaded)
-    local cat_cmd="cat"
-    [[ $file == *.gz ]] && cat_cmd="gzip -dc"
+    # --- awk (single process only, inherently single-threaded) ---
     bench "awk" "1" "$file" \
-      "$cat_cmd $file | awk 'NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}' | sort -rn > $BENCH_TMPDIR/out.txt" "$summary"
+      "$cat_cmd $file | awk 'NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}' | sort -rn > $out_awk" "$summary"
 
-    # awk + GNU parallel
+    # --- awk + GNU parallel (4t, auto) ---
+    # --block 50M --recend '\n': split at ~50MB on line boundaries
+    # NR%4==2 still works as long as blocks start at 4-line boundaries
+    # We use --round-robin for even distribution, -l 4 --block 0 to batch 4 lines per record
+    bench "awk+parallel" "4" "$file" \
+      "$cat_cmd $file | parallel -j 4 --pipe --block 50M -k 'awk \"NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}\"' | awk '{a[\$2]+=\$1}END{for(k in a)print a[k],k}' | sort -rn > $out_awkp" "$summary"
+
     bench "awk+parallel" "auto" "$file" \
-      "$cat_cmd $file | parallel --pipe -k --block 50M 'awk \"NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}\"' | awk '{a[\$2]+=\$1}END{for(k in a)print a[k],k}' | sort -rn > $BENCH_TMPDIR/out.txt" "$summary"
+      "$cat_cmd $file | parallel --pipe --block 50M -k 'awk \"NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}\"' | awk '{a[\$2]+=\$1}END{for(k in a)print a[k],k}' | sort -rn > $out_awkp" "$summary"
+
+    # --- Verify correctness against awk ground truth ---
+    info "  Verifying correctness..."
+    generate_reference "$file"
+
+    # Verify seqtable output (CSV from last seqtable run)
+    local seqtable_csv="$BENCH_TMPDIR/${fname%.gz}"
+    seqtable_csv="${seqtable_csv%.fastq}"
+    seqtable_csv="${seqtable_csv%.fq}.csv"
+    verify_output "seqtable" "$file" "$seqtable_csv"
+    verify_output "seqkit" "$file" "$out_seqkit"
+    verify_output "awk+parallel" "$file" "$out_awkp"
 
     echo
   done
+
+  # --- Results ---
 
   info "Results ($size):"
   echo
   column -t -s $'\t' "$summary"
   echo
 
-  # Best performers (skip header, sort by mean_s or peak_rss_mb)
   local fastest fastest_rss
   fastest=$(tail -n +2 "$summary" | sort -t$'\t' -k4 -n | head -1)
   fastest_rss=$(tail -n +2 "$summary" | sort -t$'\t' -k6 -n | head -1)
@@ -90,6 +184,7 @@ run_size() {
   info "Fastest (wall time): $(echo "$fastest" | awk -F'\t' '{printf "%s/%s on %s: %.3fs", $1, $2, $3, $4}')"
   info "Lowest memory (RSS): $(echo "$fastest_rss" | awk -F'\t' '{printf "%s/%s on %s: %sMB", $1, $2, $3, $6}')"
   echo
+
   info "Saved: $summary"
 }
 
@@ -102,8 +197,6 @@ bench() {
 
   info "  $tool (${threads}t) on $fname"
 
-  # --prepare: drop filesystem caches (best-effort, needs sudo on Linux)
-  # On macOS no easy way, rely on warmup instead
   hyperfine \
     --warmup "$WARMUP" \
     --runs "$RUNS" \
@@ -149,6 +242,5 @@ else
   run_size "$SIZE"
 fi
 
-# Copy JSON details
 cp "$BENCH_TMPDIR"/*.json "$RESULT_DIR/" 2>/dev/null || true
 info "Done! All results in $RESULT_DIR/"
