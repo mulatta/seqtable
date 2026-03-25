@@ -1,38 +1,23 @@
 {
-  perSystem = {
-    config,
-    pkgs,
-    lib,
-    ...
-  }: {
+  perSystem = {pkgs, ...}: {
     devShells.default = pkgs.mkShell {
-      packages = with pkgs;
-        [
-          # Rust DevDeps
-          cargo
-          rustc
-          rustfmt
-          clippy
-          rust-analyzer
-          cargo-flamegraph
-          cargo-bloat
-          just
+      packages = with pkgs; [
+        # Rust toolchain
+        cargo
+        rustc
+        rustfmt
+        clippy
+        rust-analyzer
 
-          # Build tools
-          pkg-config
-        ]
-        ++ lib.optionals stdenv.isLinux [mold]
-        ++ [(python3.withPackages (ps: [ps.polars ps.ipython])) config.packages.seqtable];
+        # Build tools
+        pkg-config
+      ];
 
-      shellHook =
-        ''
-          export ROOT=$(git rev-parse --show-toplevel)
-          export CARGO_HOME="$ROOT/.cargo"
-          export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}";
-        ''
-        + lib.optionalString pkgs.stdenv.isLinux ''
-          export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
-        '';
+      shellHook = ''
+        export ROOT=$(git rev-parse --show-toplevel)
+        export CARGO_HOME="$ROOT/.cargo"
+        export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}";
+      '';
     };
   };
 }
