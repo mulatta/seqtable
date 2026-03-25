@@ -39,11 +39,11 @@ pub struct SequenceRecord {
 
 pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) -> Result<()> {
     if !args.quiet {
-        print!(
+        eprint!(
             "   💾 Saving to {}...",
             args.format.extension().to_uppercase()
         );
-        std::io::Write::flush(&mut std::io::stdout()).ok();
+        std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
     match args.format {
@@ -53,7 +53,7 @@ pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) 
     }
 
     if !args.quiet {
-        println!(" Done!");
+        eprintln!(" Done!");
     }
     Ok(())
 }
