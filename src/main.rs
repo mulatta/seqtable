@@ -27,10 +27,6 @@ struct Args {
     #[arg(short, long, default_value = ".")]
     output_dir: PathBuf,
 
-    /// Output filename suffix
-    #[arg(short = 's', long, default_value = "_counts")]
-    suffix: String,
-
     /// Output format
     #[arg(short = 'f', long, default_value = "parquet")]
     format: OutputFormat,
@@ -216,7 +212,7 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
     };
 
     let extension = args.format.extension();
-    let output_filename = format!("{}{}.{}", base_name, args.suffix, extension);
+    let output_filename = format!("{}.{}", base_name, extension);
     let output_path = args.output_dir.join(output_filename);
 
     // Get file size for adaptive chunk size calculation
