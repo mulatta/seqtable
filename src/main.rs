@@ -2,7 +2,7 @@
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
@@ -47,13 +47,40 @@ struct Args {
     #[arg(short, long)]
     quiet: bool,
 
-    /// Compression type for Parquet (none, snappy, gzip, brotli, zstd)
+    /// Compression type for Parquet output
     #[arg(long, default_value = "snappy")]
-    compression: String,
+    compression: ParquetCompression,
 
     /// Calculate and include RPM (Reads Per Million) column
     #[arg(long)]
     rpm: bool,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum ParquetCompression {
+    None,
+    Snappy,
+    Gzip,
+    Brotli,
+    Zstd,
+}
+
+impl ParquetCompression {
+    fn to_parquet(&self) -> parquet::basic::Compression {
+        match self {
+            ParquetCompression::None => parquet::basic::Compression::UNCOMPRESSED,
+            ParquetCompression::Snappy => parquet::basic::Compression::SNAPPY,
+            ParquetCompression::Gzip => {
+                parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default())
+            }
+            ParquetCompression::Brotli => {
+                parquet::basic::Compression::BROTLI(parquet::basic::BrotliLevel::default())
+            }
+            ParquetCompression::Zstd => {
+                parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default())
+            }
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -162,13 +189,31 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
     }
 
     // Generate output filename
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("output")
-        .replace(".fastq", "")
-        .replace(".fq", "")
-        .replace(".fa", "");
+    let base_name = {
+        let name = input_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("output");
+        // Strip known extensions in order (longest first to avoid partial matches)
+        let suffixes = [
+            ".fastq.gz",
+            ".fasta.gz",
+            ".fq.gz",
+            ".fa.gz",
+            ".fastq",
+            ".fasta",
+            ".fq",
+            ".fa",
+        ];
+        let mut base = name;
+        for suffix in &suffixes {
+            if let Some(stripped) = base.strip_suffix(suffix) {
+                base = stripped;
+                break;
+            }
+        }
+        base.to_string()
+    };
 
     let extension = args.format.extension();
     let output_filename = format!("{}{}.{}", base_name, args.suffix, extension);
@@ -219,7 +264,7 @@ fn count_sequences(
     show_progress: bool,
 ) -> Result<(AHashMap<String, u64>, u64)> {
     let mut reader = parse_fastx_file(file_path)
-        .context(format!("Failed to open file: {}", file_path.display()))?;
+        .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
     // Small file optimization: no chunking
     if chunk_size == 0 {
@@ -250,13 +295,14 @@ fn count_sequences(
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
-        let seq = String::from_utf8_lossy(&record.seq()).to_string();
+        let raw = record.seq();
+        let seq = String::from_utf8_lossy(&raw).into_owned();
         current_chunk.push(seq);
         total_records += 1;
 
         // Update progress bar
         if let Some(ref pb) = progress {
-            if total_records % 10000 == 0 {
+            if total_records.is_multiple_of(10000) {
                 pb.set_position(total_records);
             }
         }
@@ -281,13 +327,13 @@ fn count_sequences(
         std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
-    // Parallel counting
+    // Parallel counting (into_par_iter to avoid clone)
     let results: Vec<AHashMap<String, u64>> = chunks
-        .par_iter()
+        .into_par_iter()
         .map(|chunk| {
             let mut local_counts = AHashMap::with_capacity(chunk.len() / 2);
             for seq in chunk {
-                *local_counts.entry(seq.clone()).or_insert(0) += 1;
+                *local_counts.entry(seq).or_insert(0) += 1;
             }
             local_counts
         })
@@ -316,7 +362,7 @@ fn count_sequences_sequential(
     show_progress: bool,
 ) -> Result<(AHashMap<String, u64>, u64)> {
     let mut reader = parse_fastx_file(file_path)
-        .context(format!("Failed to open file: {}", file_path.display()))?;
+        .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
     if show_progress {
         eprintln!("   📊 Processing (sequential mode for small file)...");
@@ -327,7 +373,8 @@ fn count_sequences_sequential(
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
-        let seq = String::from_utf8_lossy(&record.seq()).to_string();
+        let raw = record.seq();
+        let seq = String::from_utf8_lossy(&raw).into_owned();
         *counts.entry(seq).or_insert(0) += 1;
         total_records += 1;
     }

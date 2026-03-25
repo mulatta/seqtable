@@ -47,7 +47,7 @@ pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) 
     }
 
     match args.format {
-        OutputFormat::Parquet => save_parquet(records, output_path, &args.compression)?,
+        OutputFormat::Parquet => save_parquet(records, output_path, args.compression.to_parquet())?,
         OutputFormat::Csv => save_csv(records, output_path, b',')?,
         OutputFormat::Tsv => save_csv(records, output_path, b'\t')?,
     }
@@ -58,7 +58,11 @@ pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) 
     Ok(())
 }
 
-fn save_parquet(records: &[SequenceRecord], output_path: &Path, compression: &str) -> Result<()> {
+fn save_parquet(
+    records: &[SequenceRecord],
+    output_path: &Path,
+    compression: parquet::basic::Compression,
+) -> Result<()> {
     // Define schema
     let mut fields = vec![
         Field::new("sequence", DataType::Utf8, false),
@@ -101,15 +105,6 @@ fn save_parquet(records: &[SequenceRecord], output_path: &Path, compression: &st
     // Configure Parquet writer
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create file: {}", output_path.display()))?;
-
-    let compression = match compression.to_lowercase().as_str() {
-        "snappy" => parquet::basic::Compression::SNAPPY,
-        "gzip" => parquet::basic::Compression::GZIP(parquet::basic::GzipLevel::default()),
-        "brotli" => parquet::basic::Compression::BROTLI(parquet::basic::BrotliLevel::default()),
-        "zstd" => parquet::basic::Compression::ZSTD(parquet::basic::ZstdLevel::default()),
-        "none" => parquet::basic::Compression::UNCOMPRESSED,
-        _ => parquet::basic::Compression::SNAPPY,
-    };
 
     let props = WriterProperties::builder()
         .set_compression(compression)
