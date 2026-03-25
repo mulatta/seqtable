@@ -74,17 +74,17 @@ fn main() -> Result<()> {
 
     // Print header (respect quiet flag)
     if !args.quiet {
-        println!("🧬 seqtable v0.1.0");
-        println!("📁 Input files: {}", args.input.len());
-        println!("🧵 Threads per file: {}", rayon::current_num_threads());
-        println!("📊 Output format: {:?}", args.format);
+        eprintln!("🧬 seqtable v0.1.0");
+        eprintln!("📁 Input files: {}", args.input.len());
+        eprintln!("🧵 Threads per file: {}", rayon::current_num_threads());
+        eprintln!("📊 Output format: {:?}", args.format);
         if args.rpm {
-            println!("📈 RPM calculation: enabled");
+            eprintln!("📈 RPM calculation: enabled");
         }
         if args.chunk_size == 0 {
-            println!("🎯 Adaptive chunking: enabled");
+            eprintln!("🎯 Adaptive chunking: enabled");
         }
-        println!();
+        eprintln!();
     }
 
     // Process each file
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
     }
 
     if !args.quiet {
-        println!("\n✅ All files processed successfully!");
+        eprintln!("\n✅ All files processed successfully!");
     }
     Ok(())
 }
@@ -158,7 +158,7 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
     let start_time = Instant::now();
 
     if !args.quiet {
-        println!("📄 Processing: {}", input_path.display());
+        eprintln!("📄 Processing: {}", input_path.display());
     }
 
     // Generate output filename
@@ -179,7 +179,7 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
     let chunk_size = calculate_chunk_size(file_size, args.chunk_size);
 
     if !args.quiet && args.chunk_size == 0 {
-        println!(
+        eprintln!(
             "   🎯 Adaptive chunk size: {}",
             if chunk_size == 0 {
                 "disabled (small file)".to_string()
@@ -200,13 +200,13 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
 
     if !args.quiet {
         let duration = start_time.elapsed();
-        println!(
+        eprintln!(
             "   ✓ {} unique sequences, {} total reads → {}",
             counts.len(),
             total_reads,
             output_path.display()
         );
-        println!("   ⏱️  Processing time: {:.2}s\n", duration.as_secs_f64());
+        eprintln!("   ⏱️  Processing time: {:.2}s\n", duration.as_secs_f64());
     }
 
     Ok(())
@@ -276,9 +276,9 @@ fn count_sequences(
     }
 
     if show_progress {
-        println!("   📊 Total records: {}", total_records);
-        print!("   🔄 Parallel processing ({} chunks)...", chunks.len());
-        std::io::Write::flush(&mut std::io::stdout()).ok();
+        eprintln!("   📊 Total records: {}", total_records);
+        eprint!("   🔄 Parallel processing ({} chunks)...", chunks.len());
+        std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
     // Parallel counting
@@ -304,7 +304,7 @@ fn count_sequences(
         });
 
     if show_progress {
-        println!(" Done!");
+        eprintln!(" Done!");
     }
 
     Ok((final_counts, total_records))
@@ -319,7 +319,7 @@ fn count_sequences_sequential(
         .context(format!("Failed to open file: {}", file_path.display()))?;
 
     if show_progress {
-        println!("   📊 Processing (sequential mode for small file)...");
+        eprintln!("   📊 Processing (sequential mode for small file)...");
     }
 
     let mut counts = AHashMap::new();
@@ -333,7 +333,7 @@ fn count_sequences_sequential(
     }
 
     if show_progress {
-        println!("   📊 Total records: {}", total_records);
+        eprintln!("   📊 Total records: {}", total_records);
     }
 
     Ok((counts, total_records))
