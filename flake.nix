@@ -6,10 +6,10 @@
       systems = import inputs.systems;
 
       imports = [
+        ./nix/benches.nix
         ./nix/packages.nix
         ./nix/shell.nix
         ./nix/formatter.nix
-        # ./nix/overlays.nix
       ];
 
       perSystem = {
