@@ -26,7 +26,7 @@ _: {
         self'.packages.seqtable
       ];
 
-      text = builtins.readFile ../scripts/benchmark.sh;
+      text = builtins.readFile ../benches/benchmark.sh;
     };
   };
 }
