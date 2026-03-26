@@ -6,8 +6,12 @@
 # Generate fixtures (one-time)
 cargo run --example generate_fixtures --release -- --size medium
 
-# Run benchmarks
+# Option 1: nix run (slow first time due to flake eval, ~1min)
 nix run .#benchmark -- medium
+
+# Option 2: build once, run fast (recommended for repeated runs)
+nix build .#benchmark-script -o result-bench
+./result-bench/bin/seqtable-benchmark medium
 ```
 
 ## Fairness Principles
