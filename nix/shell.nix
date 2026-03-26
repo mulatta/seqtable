@@ -16,6 +16,7 @@
           cargo-flamegraph
           cargo-bloat
           mold
+          just
 
           # Build tools
           pkg-config

@@ -1,11 +1,7 @@
-# cache
-.direnv/*
-.jj/*
-
-# rust
+/target
+result/
+.direnv
+.jj
 .cargo/*
-!./cargo/config.toml
-
-# build result
-target/
-result*
+!.cargo/config.toml
+test/

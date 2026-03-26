@@ -39,38 +39,61 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Free up disk space (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "Disk space after cleanup:"
+          df -h
       - name: Set up QEMU
         if: matrix.use-qemu == true
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
       - name: Install Nix
-        uses: cachix/install-nix-action@v30
+        uses: DeterminateSystems/nix-installer-action@v14
         with:
-          extra_nix_config: |
+          extra-conf: |
             experimental-features = nix-command flakes
             max-jobs = auto
             cores = 0
             ${{ matrix.use-qemu == true && 'extra-platforms = aarch64-linux' || '' }}
-      - name: Setup Cachix
-        uses: cachix/cachix-action@v15
-        with:
-          name: mulatta
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Setup Magic Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: Verify QEMU setup
+        if: matrix.use-qemu == true
+        run: |
+          echo "Checking QEMU and binfmt setup..."
+          docker run --rm --platform linux/arm64 ubuntu:22.04 uname -m
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64 || echo "binfmt entry not found"
+      - name: Check flake
+        run: nix flake check --show-trace
       - name: Build binary
         run: |
           echo "Building for ${{ matrix.nix-system }}"
           nix build .#packages.${{ matrix.nix-system }}.seqtable \
             --print-build-logs \
             --show-trace \
-            --accept-flake-config
+            ${{ matrix.use-qemu == true && '--option system aarch64-linux' || '' }}
 
+          # Copy binary to workspace
           cp result/bin/seqtable seqtable-${{ matrix.target }}
           chmod +x seqtable-${{ matrix.target }}
       - name: Verify binary
         run: |
           file seqtable-${{ matrix.target }}
-          ./seqtable-${{ matrix.target }} --version || echo "Version check skipped (cross-compile)"
+          if [[ "${{ matrix.use-qemu }}" == "true" ]]; then
+            echo "Testing ARM64 binary with QEMU..."
+            qemu-aarch64 -L /usr/aarch64-linux-gnu seqtable-${{ matrix.target }} --version || echo "Version check skipped"
+          else
+            ./seqtable-${{ matrix.target }} --version || echo "Version check skipped"
+          fi
       - name: Get version
         id: version
         run: |
@@ -115,13 +138,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
       - name: Get version and changelog
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
+          # Extract changelog for this version (if exists)
           if [ -f CHANGELOG.md ]; then
             awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | \
               sed '1d;$d' > release-notes.md || echo "" > release-notes.md
@@ -132,7 +155,7 @@ jobs:
         run: |
           mkdir -p release-assets
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) \
-            -exec mv {} release-assets/ \;
+            -exec cp {} release-assets/ \;
           ls -lh release-assets/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -145,56 +168,23 @@ jobs:
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  publish-crate:
-    name: Publish to crates.io
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, 'rc') && !contains(github.ref, 'beta')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      - name: Verify version matches tag
-        run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "Error: Tag version ($TAG_VERSION) doesn't match Cargo.toml version ($CARGO_VERSION)"
-            exit 1
-          fi
-          echo "Version check passed: $CARGO_VERSION"
-      - name: Check if already published
-        id: check_published
-        run: |
-          CRATE_NAME=$(grep -m1 '^name' Cargo.toml | cut -d'"' -f2)
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-
-          if cargo search "$CRATE_NAME" --limit 1 | grep -q "^$CRATE_NAME = \"$TAG_VERSION\""; then
-            echo "already_published=true" >> $GITHUB_OUTPUT
-            echo "Version $TAG_VERSION is already published"
-          else
-            echo "already_published=false" >> $GITHUB_OUTPUT
-            echo "Version $TAG_VERSION is not yet published"
-          fi
-      - name: Publish to crates.io
-        if: steps.check_published.outputs.already_published != 'true'
-        run: |
-          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --allow-dirty
-        continue-on-error: false
-      - name: Wait for crates.io
-        if: steps.check_published.outputs.already_published != 'true'
-        run: |
-          echo "Waiting for crates.io to index the new version..."
-          sleep 30
+# publish-crate:
+#   name: Publish to crates.io
+#   needs: build
+#   runs-on: ubuntu-latest
+#   if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref, 'rc')
+#
+#   steps:
+#     - name: Checkout code
+#       uses: actions/checkout@v4
+#
+#     - name: Install Nix
+#       uses: DeterminateSystems/nix-installer-action@v14
+#
+#     - name: Setup Magic Nix Cache
+#       uses: DeterminateSystems/magic-nix-cache-action@v8
+#
+#     - name: Publish to crates.io
+#       run: |
+#         nix develop --command cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+#       continue-on-error: true

@@ -29,7 +29,6 @@ nix run github:mulatta/seqtable -- --help
 
 ```bash
 git clone https://github.com/mulatta/seqtable
--cd seqtable
 cd seqtable
 cargo build --release
 ./target/release/seqtable --help
@@ -216,10 +215,10 @@ Output (Parquet/CSV/TSV)
 
 ### Key Optimizations
 
-1.  **Streaming I/O**: Files processed incrementally
-2.  **Parallel Hashing**: Multi-threaded counting with AHash
-3.  **Zero-Copy**: Minimal data duplication
-4.  **Adaptive Chunking**: Optimal chunk size selection
+1. **Streaming I/O**: Files processed incrementally
+2. **Parallel Hashing**: Multi-threaded counting with AHash
+3. **Zero-Copy**: Minimal data duplication
+4. **Adaptive Chunking**: Optimal chunk size selection
 
 ## Development
 
