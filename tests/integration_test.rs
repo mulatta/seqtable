@@ -242,7 +242,7 @@ fn test_reject_fasta() {
         let (_, stderr, ok) =
             run_seqtable(&[fasta.to_str().unwrap(), "-o", dir.to_str().unwrap(), "-q"]);
         assert!(!ok);
-        assert!(stderr.contains("Unsupported file format"));
+        assert!(stderr.contains("unsupported file format"));
     });
 }
 

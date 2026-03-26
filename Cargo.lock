@@ -1280,6 +1280,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "clap",
+ "console",
  "csv",
  "flate2",
  "indicatif",

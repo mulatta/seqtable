@@ -3,6 +3,7 @@
 use ahash::AHashMap;
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use console::Term;
 use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
@@ -15,15 +16,14 @@ use output::{OutputFormat, SequenceRecord};
 /// High-performance FASTQ sequence counter with parallel processing
 #[derive(Parser, Debug)]
 #[command(name = "seqtable")]
-#[command(author = "Seungwon Lee")]
-#[command(version = "0.1.0")]
-#[command(about = "High performance FASTQ sequence count table generator", long_about = None)]
+#[command(version)]
+#[command(about = "Count sequences in FASTQ files")]
 struct Args {
     /// Input FASTQ file path(s) (.fastq, .fq, .fastq.gz, .fq.gz)
     #[arg(required = true)]
     input: Vec<PathBuf>,
 
-    /// Output directory (default: current directory)
+    /// Output directory
     #[arg(short, long, default_value = ".")]
     output_dir: PathBuf,
 
@@ -31,19 +31,19 @@ struct Args {
     #[arg(short = 'f', long, default_value = "parquet")]
     format: OutputFormat,
 
-    /// Number of threads to use (0 = auto-detect)
+    /// Number of threads (0 = auto)
     #[arg(short, long, default_value = "0")]
     threads: usize,
 
-    /// Disable progress bar
+    /// Suppress all status output
     #[arg(short, long)]
     quiet: bool,
 
-    /// Compression type for Parquet output
+    /// Parquet compression
     #[arg(long, default_value = "zstd")]
     compression: ParquetCompression,
 
-    /// Calculate and include RPM (Reads Per Million) column
+    /// Include RPM (Reads Per Million) column
     #[arg(long)]
     rpm: bool,
 }
@@ -77,8 +77,9 @@ impl ParquetCompression {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let quiet = args.quiet;
+    let is_tty = Term::stderr().is_term();
 
-    // Configure thread pool (0 = rayon default, uses all cores or RAYON_NUM_THREADS)
     if args.threads > 0 {
         rayon::ThreadPoolBuilder::new()
             .num_threads(args.threads)
@@ -86,44 +87,36 @@ fn main() -> Result<()> {
             .context("Failed to initialize thread pool")?;
     }
 
-    // Create output directory
     std::fs::create_dir_all(&args.output_dir).context("Failed to create output directory")?;
 
-    // Print header (respect quiet flag)
-    if !args.quiet {
-        eprintln!("🧬 seqtable v0.1.0");
-        eprintln!("📁 Input files: {}", args.input.len());
-        eprintln!("🧵 Threads per file: {}", rayon::current_num_threads());
-        eprintln!("📊 Output format: {:?}", args.format);
-        if args.rpm {
-            eprintln!("📈 RPM calculation: enabled");
-        }
+    if !quiet {
+        eprintln!(
+            "seqtable {} | {} file{} | {} threads | {:?}",
+            env!("CARGO_PKG_VERSION"),
+            args.input.len(),
+            if args.input.len() > 1 { "s" } else { "" },
+            rayon::current_num_threads(),
+            args.format
+        );
         eprintln!();
     }
 
-    // Process each file
-    for input_file in &args.input {
-        process_file(input_file, &args)?;
+    let total_start = Instant::now();
+
+    for (idx, input_file) in args.input.iter().enumerate() {
+        process_file(input_file, &args, idx + 1, quiet, is_tty)?;
     }
 
-    if !args.quiet {
-        eprintln!("\n✅ All files processed successfully!");
+    if !quiet {
+        eprintln!(
+            "completed {} file{} in {:.2}s",
+            args.input.len(),
+            if args.input.len() > 1 { "s" } else { "" },
+            total_start.elapsed().as_secs_f64()
+        );
     }
+
     Ok(())
-}
-
-/// Calculate adaptive chunk size based on estimated file size
-fn calculate_chunk_size(file_size: u64) -> usize {
-    // Estimate number of records (assuming ~100 bytes per record)
-    let estimated_records = (file_size / 100).max(100);
-
-    match estimated_records {
-        0..=10_000 => 0,                  // No chunking for tiny files
-        10_001..=100_000 => 10_000,       // Small files
-        100_001..=1_000_000 => 25_000,    // Medium files
-        1_000_001..=10_000_000 => 50_000, // Large files
-        _ => 100_000,                     // Very large files
-    }
 }
 
 const FASTQ_EXTENSIONS: &[&str] = &[".fastq.gz", ".fq.gz", ".fastq", ".fq"];
@@ -133,21 +126,43 @@ fn validate_fastq(path: &Path) -> Result<()> {
     let is_fastq = FASTQ_EXTENSIONS.iter().any(|ext| name.ends_with(ext));
     anyhow::ensure!(
         is_fastq,
-        "Unsupported file format: {}\nExpected FASTQ (.fastq, .fq, .fastq.gz, .fq.gz)",
+        "unsupported file format: {}\n  expected: .fastq, .fq, .fastq.gz, .fq.gz",
         path.display()
     );
     Ok(())
 }
 
-fn process_file(input_path: &Path, args: &Args) -> Result<()> {
+fn calculate_chunk_size(file_size: u64) -> usize {
+    let estimated_records = (file_size / 100).max(100);
+    match estimated_records {
+        0..=10_000 => 0,
+        10_001..=100_000 => 10_000,
+        100_001..=1_000_000 => 25_000,
+        1_000_001..=10_000_000 => 50_000,
+        _ => 100_000,
+    }
+}
+
+fn format_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn process_file(
+    input_path: &Path,
+    args: &Args,
+    file_num: usize,
+    quiet: bool,
+    is_tty: bool,
+) -> Result<()> {
     validate_fastq(input_path)?;
     let start_time = Instant::now();
 
-    if !args.quiet {
-        eprintln!("📄 Processing: {}", input_path.display());
-    }
-
-    // Generate output filename
     let base_name = {
         let name = input_path
             .file_name()
@@ -164,31 +179,50 @@ fn process_file(input_path: &Path, args: &Args) -> Result<()> {
     };
 
     let extension = args.format.extension();
-    let output_filename = format!("{}.{}", base_name, extension);
-    let output_path = args.output_dir.join(output_filename);
+    let output_filename = format!("{base_name}.{extension}");
+    let output_path = args.output_dir.join(&output_filename);
+    let input_display = input_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?");
 
-    // Get file size for adaptive chunk size calculation
+    if !quiet {
+        eprintln!("[{}/{}] {}", file_num, args.input.len(), input_display);
+    }
+
     let file_size = std::fs::metadata(input_path)?.len();
     let chunk_size = calculate_chunk_size(file_size);
 
-    // Count sequences
-    let (counts, total_reads) = count_sequences(input_path, chunk_size, !args.quiet)?;
+    // Count
+    let show_progress = !quiet && is_tty;
+    let (counts, total_reads) = count_sequences(input_path, chunk_size, show_progress)?;
 
-    // Convert to records with optional RPM
-    let records = prepare_records(&counts, total_reads, args.rpm);
+    let unique_count = counts.len() as u64;
 
-    // Save in specified format
+    // Prepare
+    let records = prepare_records(counts, total_reads, args.rpm);
+
+    // Output
+    if !quiet {
+        eprint!("      {:<10} {} ... ", "writing", output_filename);
+        std::io::Write::flush(&mut std::io::stderr()).ok();
+    }
     output::save_output(&records, &output_path, args)?;
+    if !quiet {
+        eprintln!("done");
+    }
 
-    if !args.quiet {
+    if !quiet {
         let duration = start_time.elapsed();
         eprintln!(
-            "   ✓ {} unique sequences, {} total reads → {}",
-            counts.len(),
-            total_reads,
-            output_path.display()
+            "      {:<10} {} unique | {} total -> {} [{:.2}s]",
+            "result",
+            format_count(unique_count),
+            format_count(total_reads),
+            output_filename,
+            duration.as_secs_f64()
         );
-        eprintln!("   ⏱️  Processing time: {:.2}s\n", duration.as_secs_f64());
+        eprintln!();
     }
 
     Ok(())
@@ -203,12 +237,10 @@ fn count_sequences(
     let mut reader = parse_fastx_file(file_path)
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
-    // Small file optimization: no chunking
     if chunk_size == 0 {
         return count_sequences_sequential(file_path, show_progress);
     }
 
-    // Estimate total records for progress bar
     let file_size = std::fs::metadata(file_path)?.len();
     let estimated_records = (file_size / 100).max(1000);
 
@@ -216,16 +248,16 @@ fn count_sequences(
         let pb = ProgressBar::new(estimated_records);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("   {spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({percent}%)")
+                .template("      {msg:<10} [{bar:30}] {pos}/{len}")
                 .unwrap()
-                .progress_chars("#>-"),
+                .progress_chars("=> "),
         );
+        pb.set_message("reading");
         Some(pb)
     } else {
         None
     };
 
-    // Read records in chunks
     let mut chunks = Vec::new();
     let mut current_chunk = Vec::with_capacity(chunk_size);
     let mut total_records = 0u64;
@@ -237,7 +269,6 @@ fn count_sequences(
         current_chunk.push(seq);
         total_records += 1;
 
-        // Update progress bar
         if let Some(ref pb) = progress {
             if total_records.is_multiple_of(10000) {
                 pb.set_position(total_records);
@@ -254,17 +285,13 @@ fn count_sequences(
         chunks.push(current_chunk);
     }
 
-    if let Some(pb) = progress {
-        pb.finish_and_clear();
+    let num_chunks = chunks.len();
+
+    if let Some(ref pb) = progress {
+        pb.set_position(total_records);
+        pb.set_message("counting");
     }
 
-    if show_progress {
-        eprintln!("   📊 Total records: {}", total_records);
-        eprint!("   🔄 Parallel processing ({} chunks)...", chunks.len());
-        std::io::Write::flush(&mut std::io::stderr()).ok();
-    }
-
-    // Parallel counting (into_par_iter to avoid clone)
     let results: Vec<AHashMap<String, u64>> = chunks
         .into_par_iter()
         .map(|chunk| {
@@ -276,7 +303,6 @@ fn count_sequences(
         })
         .collect();
 
-    // Parallel merge
     let final_counts = results
         .into_par_iter()
         .reduce(AHashMap::new, |mut acc, map| {
@@ -286,14 +312,19 @@ fn count_sequences(
             acc
         });
 
-    if show_progress {
-        eprintln!(" Done!");
+    if let Some(pb) = progress {
+        pb.finish_and_clear();
+        eprintln!(
+            "      {:<10} {} records | {} chunks",
+            "read",
+            format_count(total_records),
+            num_chunks
+        );
     }
 
     Ok((final_counts, total_records))
 }
 
-/// Fast path for small files - no chunking, single-threaded
 fn count_sequences_sequential(
     file_path: &Path,
     show_progress: bool,
@@ -302,7 +333,8 @@ fn count_sequences_sequential(
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
     if show_progress {
-        eprintln!("   📊 Processing (sequential mode for small file)...");
+        eprint!("      {:<10} ... ", "counting");
+        std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
     let mut counts = AHashMap::new();
@@ -317,34 +349,33 @@ fn count_sequences_sequential(
     }
 
     if show_progress {
-        eprintln!("   📊 Total records: {}", total_records);
+        eprintln!("{} records", format_count(total_records));
     }
 
     Ok((counts, total_records))
 }
 
 fn prepare_records(
-    counts: &AHashMap<String, u64>,
+    counts: AHashMap<String, u64>,
     total_reads: u64,
     include_rpm: bool,
 ) -> Vec<SequenceRecord> {
     let mut records: Vec<_> = counts
-        .iter()
+        .into_iter()
         .map(|(seq, count)| {
             let rpm = if include_rpm {
-                Some((*count as f64 / total_reads as f64) * 1_000_000.0)
+                Some((count as f64 / total_reads as f64) * 1_000_000.0)
             } else {
                 None
             };
             SequenceRecord {
-                sequence: seq.clone(),
-                count: *count,
+                sequence: seq,
+                count,
                 rpm,
             }
         })
         .collect();
 
-    // Sort by count (descending)
     records.sort_unstable_by(|a, b| b.count.cmp(&a.count));
     records
 }
