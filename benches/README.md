@@ -17,23 +17,22 @@ nix build .#benchmark-script -o result-bench
 ## Fairness Principles
 
 1. **All tools write to file** — not `/dev/null`. I/O cost is included equally.
-2. **Correctness verified** — each tool's output is compared against seqtable's reference. Mismatches are flagged.
-3. **FASTQ-aware splitting** — `awk+parallel` uses `--recstart '@'` to avoid splitting mid-record.
-4. **Fixed thread counts** — 1t/4t/auto for reproducible scaling comparison, not just "auto" which varies by machine.
-5. **Realistic usage** — each tool uses its natural invocation pattern (seqtable writes CSV, seqkit pipes through sort|uniq -c, awk uses associative arrays).
-6. **Statistical rigor** — warmup=3, runs=5, `sync` between runs. Mean + stddev reported.
+2. **Correctness verified** — every tool's output is compared against awk ground truth. Mismatches are flagged.
+3. **Fixed thread counts** — 1t/4t/auto for reproducible scaling comparison.
+4. **Realistic usage** — each tool uses its natural invocation pattern.
+5. **Statistical rigor** — warmup=3, runs=5, `sync` between runs. Mean + stddev reported.
 
 ## What We Measure
 
 | Metric          | Tool                 | Notes                                          |
 | --------------- | -------------------- | ---------------------------------------------- |
-| Wall time       | hyperfine            | Includes warmup, statistical outlier detection |
-| Peak RSS        | `/usr/bin/time -l`   | Single run after hyperfine                     |
-| Phase breakdown | seqtable `--profile` | count/prepare/output time + RSS                |
+| Wall time       | hyperfine            | Includes warmup, statistical outlier detection  |
+| Peak RSS        | `/usr/bin/time -l`   | Single run after hyperfine                      |
+| Phase breakdown | seqtable `--profile` | count/prepare/output time + RSS                 |
 
 ## Test Grid
 
-**Files**: 3 sizes × 3 unique ratios × 2 seq lengths = 18 fixtures
+**Files**: 3 sizes x 3 unique ratios x 2 seq lengths = 18 fixtures
 
 | Size        | Reads | Use case            |
 | ----------- | ----- | ------------------- |
@@ -41,18 +40,32 @@ nix build .#benchmark-script -o result-bench
 | medium (md) | 20M   | Realistic miRNA-seq |
 | large (lg)  | 100M  | Stress test         |
 
-**Tools**: 4 tools × thread variants = 11 configurations per file
+**Tools**: 4 tools x thread variants = 9 configurations per file
 
-| Tool         | 1t  | 4t  | auto | Notes                                   |
-| ------------ | --- | --- | ---- | --------------------------------------- |
-| seqtable     | ✅  | ✅  | ✅   | Native HashMap counting                 |
-| seqkit       | ✅  | ✅  | ✅   | fx2tab → sort → uniq -c pipeline        |
-| awk          | ✅  | —   | —    | Single-process associative array        |
-| awk+parallel | —   | ✅  | ✅   | GNU parallel with FASTQ-aware splitting |
+| Tool      | 1t  | 4t  | auto | Notes                                      |
+| --------- | --- | --- | ---- | ------------------------------------------ |
+| seqtable  | Y   | Y   | Y    | Native HashMap counting                    |
+| seqkit    | Y   | Y   | Y    | fx2tab pipe to sort/uniq -c pipeline       |
+| awk       | Y   | -   | -    | HashMap counting (associative array)       |
+| coreutils | Y   | Y   | -    | sort/uniq -c baseline (sort --parallel=4)  |
+
+## Why These Tools?
+
+- **coreutils (sort|uniq -c)**: The true baseline. POSIX standard, universally available, correct by construction. Single-threaded and parallel sort variants.
+- **awk**: HashMap-based counting in a single process. Shows the O(n) algorithm advantage over O(n log n) sort, but limited to single core.
+- **seqkit**: The most widely used bioinformatics FASTQ toolkit. Realistic comparison for users choosing between tools.
+- **seqtable**: Our tool. Should beat all of the above on both speed and correctness.
+
+## Why Not awk+parallel?
+
+GNU parallel's `--pipe` splits input on line boundaries, but FASTQ records are 4 lines.
+A block split mid-record corrupts `NR%4==2` counting in downstream awk processes,
+producing incorrect results. We verified this: line counts consistently mismatch ground truth.
+Since correctness is non-negotiable for a benchmark comparison, awk+parallel is excluded.
 
 ## Known Limitations
 
 - **seqkit comparison**: seqkit has no built-in count command, so the pipeline (`fx2tab | sort | uniq -c`) includes O(n log n) sort cost that seqtable avoids with O(n) HashMap. This reflects realistic usage, not algorithmic parity.
-- **awk+parallel merge**: the two-phase merge (`parallel ... | awk merge`) adds overhead not present in seqtable's single-process merge.
 - **gzip decoding**: seqtable uses built-in flate2, others use system `gzip -dc` pipe. Both are realistic but not identical implementations.
 - **Peak RSS measurement**: `/usr/bin/time -l` measures the entire process tree. For piped commands (seqkit, awk), this may undercount total memory across all pipe stages.
+- **Warmup warnings**: On macOS, there is no way to drop page cache without root. `sync` only flushes write buffers. First-run slowness after warmup is expected; stddev indicates measurement reliability.

@@ -20,7 +20,6 @@ _: {
         bc
         hyperfine
         jq
-        parallel
         seqkit
         util-linux # column
         self'.packages.seqtable

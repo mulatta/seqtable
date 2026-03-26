@@ -116,10 +116,9 @@ run_size() {
     local cat_cmd="cat"
     [[ $file == *.gz ]] && cat_cmd="gzip -dc"
 
-    local out_seqkit out_awk out_awkp
+    local out_seqkit out_awk
     out_seqkit="$BENCH_TMPDIR/out_seqkit_${fname}"
     out_awk="$BENCH_TMPDIR/out_awk_${fname}"
-    out_awkp="$BENCH_TMPDIR/out_awkp_${fname}"
 
     # --- seqtable (1t, 4t, auto) ---
     bench "seqtable" "1" "$file" \
@@ -141,31 +140,29 @@ run_size() {
     bench "seqkit" "auto" "$file" \
       "seqkit fx2tab $file | cut -f2 | sort | uniq -c | sort -rn > $out_seqkit" "$summary"
 
-    # --- awk (single process only, inherently single-threaded) ---
+    # --- awk (HashMap counting, single-threaded) ---
     bench "awk" "1" "$file" \
       "$cat_cmd $file | awk 'NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}' | sort -rn > $out_awk" "$summary"
 
-    # --- awk + GNU parallel (4t, auto) ---
-    # --block 50M --recend '\n': split at ~50MB on line boundaries
-    # NR%4==2 still works as long as blocks start at 4-line boundaries
-    # We use --round-robin for even distribution, -l 4 --block 0 to batch 4 lines per record
-    bench "awk+parallel" "4" "$file" \
-      "$cat_cmd $file | parallel -j 4 --pipe --block 50M -k 'awk \"NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}\"' | awk '{a[\$2]+=\$1}END{for(k in a)print a[k],k}' | sort -rn > $out_awkp" "$summary"
+    # --- coreutils baseline (sort|uniq -c, single-threaded) ---
+    local out_core="$BENCH_TMPDIR/out_core_${fname}"
+    bench "coreutils" "1" "$file" \
+      "$cat_cmd $file | awk 'NR%4==2' | sort | uniq -c | sort -rn > $out_core" "$summary"
 
-    bench "awk+parallel" "auto" "$file" \
-      "$cat_cmd $file | parallel --pipe --block 50M -k 'awk \"NR%4==2{a[\$0]++}END{for(k in a)print a[k],k}\"' | awk '{a[\$2]+=\$1}END{for(k in a)print a[k],k}' | sort -rn > $out_awkp" "$summary"
+    # --- coreutils with parallel sort ---
+    bench "coreutils" "4" "$file" \
+      "$cat_cmd $file | awk 'NR%4==2' | sort --parallel=4 | uniq -c | sort -rn > $out_core" "$summary"
 
     # --- Verify correctness against awk ground truth ---
     info "  Verifying correctness..."
     generate_reference "$file"
 
-    # Verify seqtable output (CSV from last seqtable run)
     local seqtable_csv="$BENCH_TMPDIR/${fname%.gz}"
     seqtable_csv="${seqtable_csv%.fastq}"
     seqtable_csv="${seqtable_csv%.fq}.csv"
     verify_output "seqtable" "$file" "$seqtable_csv"
     verify_output "seqkit" "$file" "$out_seqkit"
-    verify_output "awk+parallel" "$file" "$out_awkp"
+    verify_output "coreutils" "$file" "$out_core"
 
     echo
   done
