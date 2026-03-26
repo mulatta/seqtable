@@ -25,7 +25,7 @@ nix run .#benchmark -- medium
 | --------------- | -------------------- | ---------------------------------------------- |
 | Wall time       | hyperfine            | Includes warmup, statistical outlier detection |
 | Peak RSS        | `/usr/bin/time -l`   | Single run after hyperfine                     |
-| Phase breakdown | seqtable `--verbose` | count/prepare/output time + RSS                |
+| Phase breakdown | seqtable `--profile` | count/prepare/output time + RSS                |
 
 ## Test Grid
 

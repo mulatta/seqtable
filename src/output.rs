@@ -38,22 +38,10 @@ pub struct SequenceRecord {
 }
 
 pub fn save_output(records: &[SequenceRecord], output_path: &Path, args: &Args) -> Result<()> {
-    if !args.quiet {
-        eprint!(
-            "   💾 Saving to {}...",
-            args.format.extension().to_uppercase()
-        );
-        std::io::Write::flush(&mut std::io::stderr()).ok();
-    }
-
     match args.format {
         OutputFormat::Parquet => save_parquet(records, output_path, args.compression.to_parquet())?,
         OutputFormat::Csv => save_csv(records, output_path, b',')?,
         OutputFormat::Tsv => save_csv(records, output_path, b'\t')?,
-    }
-
-    if !args.quiet {
-        eprintln!(" Done!");
     }
     Ok(())
 }
