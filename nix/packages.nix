@@ -14,7 +14,7 @@
       inherit src;
       pname = "seqtable";
       version = "0.1.0";
-      nativeBuildInputs = with pkgs; [pkg-config];
+      nativeBuildInputs = with pkgs; [pkg-config cmake];
     };
 
     # Build only dependencies (cached separately)

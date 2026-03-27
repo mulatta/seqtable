@@ -8,6 +8,7 @@ _: {
       packages = [
         rustToolchain
         pkgs.pkg-config
+        pkgs.cmake
       ];
     };
   };

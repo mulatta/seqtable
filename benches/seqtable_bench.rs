@@ -33,6 +33,26 @@ fn bench_fixtures() -> Vec<Fixture> {
     fixtures
 }
 
+fn bench_fixtures_gz() -> Vec<Fixture> {
+    let files = [
+        ("short_low_gz", "bn_short_low_10000.fastq.gz"),
+        ("short_mid_gz", "bn_short_mid_10000.fastq.gz"),
+        ("short_high_gz", "bn_short_high_10000.fastq.gz"),
+        ("amp_low_gz", "bn_amp_low_10000.fastq.gz"),
+        ("amp_mid_gz", "bn_amp_mid_10000.fastq.gz"),
+        ("amp_high_gz", "bn_amp_high_10000.fastq.gz"),
+    ];
+
+    let mut fixtures = Vec::new();
+    for (name, file) in files {
+        let path = Path::new(FIXTURE_DIR).join(file);
+        if path.exists() {
+            fixtures.push(Fixture { name, path });
+        }
+    }
+    fixtures
+}
+
 fn load_records_from_fixture(path: &Path) -> Vec<SequenceRecord> {
     let (counts, total) = count_sequences_sequential(path, false).unwrap();
     prepare_records(counts, total, false)
@@ -66,6 +86,33 @@ fn bench_count_sequences(c: &mut Criterion) {
                 |b, path| b.iter(|| count_sequences(path, chunk, false).unwrap()),
             );
         }
+    }
+
+    group.finish();
+}
+
+fn bench_count_sequences_gz(c: &mut Criterion) {
+    let fixtures = bench_fixtures_gz();
+    if fixtures.is_empty() {
+        eprintln!("gz bench fixtures not found, run: gzip -k tests/fixtures/bn_*.fastq");
+        return;
+    }
+
+    let mut group = c.benchmark_group("count_sequences_gz");
+    group.throughput(Throughput::Elements(READS));
+
+    for f in &fixtures {
+        group.bench_with_input(
+            BenchmarkId::new("sequential", f.name),
+            &f.path,
+            |b, path| b.iter(|| count_sequences_sequential(path, false).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("parallel/chunk_0", f.name),
+            &f.path,
+            |b, path| b.iter(|| count_sequences(path, 0, false).unwrap()),
+        );
     }
 
     group.finish();
@@ -161,6 +208,7 @@ fn bench_save_parquet(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_count_sequences,
+    bench_count_sequences_gz,
     bench_prepare_records,
     bench_save_csv,
     bench_save_parquet,
