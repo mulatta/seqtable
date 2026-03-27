@@ -174,6 +174,7 @@ fn format_bytes(b: u64) -> String {
 
 fn all_specs() -> Vec<FixtureSpec> {
     let sizes: &[(&str, usize, &str)] = &[
+        ("bn", 10_000, "bench"),
         ("sm", 1_000_000, "small"),
         ("md", 20_000_000, "medium"),
         ("lg", 100_000_000, "large"),
@@ -189,7 +190,7 @@ fn all_specs() -> Vec<FixtureSpec> {
         for (uniq_name, uniq_frac) in uniques {
             for (len_name, seq_len) in lengths {
                 let unique_count = ((*reads as f64) * uniq_frac) as usize;
-                let ext = if *size_class == "small" {
+                let ext = if *size_class == "small" || *size_class == "bench" {
                     "fastq"
                 } else {
                     "fq.gz"
@@ -220,6 +221,7 @@ fn main() {
             "--size" => {
                 i += 1;
                 size_filter = Some(match args.get(i).map(|s| s.as_str()) {
+                    Some("bench") => "bench",
                     Some("small") => "small",
                     Some("medium") => "medium",
                     Some("large") => "large",
