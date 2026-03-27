@@ -11,3 +11,6 @@ tests/fixtures/*
 
 # Benchmark results
 benches/results/
+
+# dhat profiler output
+dhat-heap.json

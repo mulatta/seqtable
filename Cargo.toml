@@ -19,6 +19,7 @@ csv = "1.4.0"
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.8", features = ["html_reports"] }
+dhat = "0.3"
 
 [[bench]]
 name = "seqtable_bench"
@@ -37,3 +38,8 @@ panic = "abort"
 
 [profile.bench]
 strip = false
+
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = 1
