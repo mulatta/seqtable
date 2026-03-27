@@ -18,6 +18,12 @@ csv = "1.4.0"
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.8", features = ["html_reports"] }
+ahash = "0.8"
+
+[[bench]]
+name = "seqtable_bench"
+harness = false
 
 [profile.dev]
 opt-level = 1
@@ -29,3 +35,6 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[profile.bench]
+strip = false
