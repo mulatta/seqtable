@@ -9,11 +9,6 @@ _: {
         rustToolchain
         pkgs.pkg-config
       ];
-
-      shellHook = ''
-        export ROOT=$(git rev-parse --show-toplevel)
-        export CARGO_HOME="$ROOT/.cargo"
-      '';
     };
   };
 }
