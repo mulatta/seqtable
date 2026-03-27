@@ -2,8 +2,7 @@
 result/
 .direnv
 .jj
-.cargo/*
-!.cargo/config.toml
+.cargo/
 test/
 
 # Benchmark fixtures (generated, not tracked)
