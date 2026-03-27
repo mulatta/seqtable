@@ -31,7 +31,7 @@ impl OutputFormat {
 }
 
 pub struct SequenceRecord {
-    pub sequence: String,
+    pub sequence: Vec<u8>,
     pub count: u64,
     pub rpm: Option<f64>,
 }
@@ -71,7 +71,10 @@ pub fn save_parquet(
     let mut counts = Vec::with_capacity(capacity);
 
     for record in records {
-        sequences.push(record.sequence.as_str());
+        // FASTQ sequences are ASCII — from_utf8 is cheap for ASCII data
+        sequences.push(
+            std::str::from_utf8(&record.sequence).expect("FASTQ sequence is not valid UTF-8"),
+        );
         counts.push(record.count);
     }
 
@@ -124,14 +127,11 @@ pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -
     }
 
     for record in records {
+        let seq = std::str::from_utf8(&record.sequence).expect("FASTQ sequence is not valid UTF-8");
         if let Some(rpm) = record.rpm {
-            csv_writer.write_record([
-                record.sequence.as_str(),
-                &record.count.to_string(),
-                &format!("{:.2}", rpm),
-            ])?;
+            csv_writer.write_record([seq, &record.count.to_string(), &format!("{:.2}", rpm)])?;
         } else {
-            csv_writer.write_record([record.sequence.as_str(), &record.count.to_string()])?;
+            csv_writer.write_record([seq, &record.count.to_string()])?;
         }
     }
 

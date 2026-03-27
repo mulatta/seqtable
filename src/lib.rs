@@ -9,6 +9,8 @@ use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use std::path::Path;
 
+pub type SeqCounts = AHashMap<Vec<u8>, u64>;
+
 pub const FASTQ_EXTENSIONS: &[&str] = &[".fastq.gz", ".fq.gz", ".fastq", ".fq"];
 
 pub fn validate_fastq(path: &Path) -> Result<()> {
@@ -48,7 +50,7 @@ pub fn count_sequences(
     file_path: &Path,
     chunk_size: usize,
     show_progress: bool,
-) -> Result<(AHashMap<String, u64>, u64)> {
+) -> Result<(SeqCounts, u64)> {
     let mut reader = parse_fastx_file(file_path)
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
@@ -73,16 +75,23 @@ pub fn count_sequences(
         None
     };
 
-    let mut partial_counts: Vec<AHashMap<String, u64>> = Vec::new();
-    let mut current_chunk = Vec::with_capacity(chunk_size);
+    let mut partial_counts: Vec<SeqCounts> = Vec::new();
+    let mut local = AHashMap::with_capacity(chunk_size / 2);
+    let mut chunk_count = 0usize;
     let mut total_records = 0u64;
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
         let raw = record.seq();
-        let seq = String::from_utf8_lossy(&raw).into_owned();
-        current_chunk.push(seq);
         total_records += 1;
+
+        // Probe existing key first — duplicates skip allocation entirely
+        if let Some(count) = local.get_mut(raw.as_ref()) {
+            *count += 1;
+        } else {
+            local.insert(raw.into_owned(), 1);
+        }
+        chunk_count += 1;
 
         if let Some(ref pb) = progress {
             if total_records.is_multiple_of(10000) {
@@ -90,23 +99,15 @@ pub fn count_sequences(
             }
         }
 
-        if current_chunk.len() >= chunk_size {
-            let chunk = std::mem::take(&mut current_chunk);
-            current_chunk = Vec::with_capacity(chunk_size);
-            let mut local = AHashMap::with_capacity(chunk.len() / 2);
-            for seq in chunk {
-                *local.entry(seq).or_insert(0) += 1;
-            }
-            partial_counts.push(local);
+        if chunk_count >= chunk_size {
+            partial_counts.push(std::mem::take(&mut local));
+            local = AHashMap::with_capacity(chunk_size / 2);
+            chunk_count = 0;
         }
     }
 
     // Count remaining
-    if !current_chunk.is_empty() {
-        let mut local = AHashMap::with_capacity(current_chunk.len() / 2);
-        for seq in current_chunk {
-            *local.entry(seq).or_insert(0) += 1;
-        }
+    if !local.is_empty() {
         partial_counts.push(local);
     }
 
@@ -142,7 +143,7 @@ pub fn count_sequences(
 pub fn count_sequences_sequential(
     file_path: &Path,
     show_progress: bool,
-) -> Result<(AHashMap<String, u64>, u64)> {
+) -> Result<(SeqCounts, u64)> {
     let mut reader = parse_fastx_file(file_path)
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
@@ -151,14 +152,17 @@ pub fn count_sequences_sequential(
         std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
-    let mut counts = AHashMap::new();
+    let mut counts: SeqCounts = AHashMap::new();
     let mut total_records = 0u64;
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
         let raw = record.seq();
-        let seq = String::from_utf8_lossy(&raw).into_owned();
-        *counts.entry(seq).or_insert(0) += 1;
+        if let Some(count) = counts.get_mut(raw.as_ref()) {
+            *count += 1;
+        } else {
+            counts.insert(raw.into_owned(), 1);
+        }
         total_records += 1;
     }
 
@@ -170,7 +174,7 @@ pub fn count_sequences_sequential(
 }
 
 pub fn prepare_records(
-    counts: AHashMap<String, u64>,
+    counts: SeqCounts,
     total_reads: u64,
     include_rpm: bool,
 ) -> Vec<SequenceRecord> {
