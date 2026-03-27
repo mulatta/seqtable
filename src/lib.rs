@@ -73,7 +73,7 @@ pub fn count_sequences(
         None
     };
 
-    let mut chunks = Vec::new();
+    let mut partial_counts: Vec<AHashMap<String, u64>> = Vec::new();
     let mut current_chunk = Vec::with_capacity(chunk_size);
     let mut total_records = 0u64;
 
@@ -91,34 +91,33 @@ pub fn count_sequences(
         }
 
         if current_chunk.len() >= chunk_size {
-            chunks.push(std::mem::take(&mut current_chunk));
+            let chunk = std::mem::take(&mut current_chunk);
             current_chunk = Vec::with_capacity(chunk_size);
+            let mut local = AHashMap::with_capacity(chunk.len() / 2);
+            for seq in chunk {
+                *local.entry(seq).or_insert(0) += 1;
+            }
+            partial_counts.push(local);
         }
     }
 
+    // Count remaining
     if !current_chunk.is_empty() {
-        chunks.push(current_chunk);
+        let mut local = AHashMap::with_capacity(current_chunk.len() / 2);
+        for seq in current_chunk {
+            *local.entry(seq).or_insert(0) += 1;
+        }
+        partial_counts.push(local);
     }
 
-    let num_chunks = chunks.len();
+    let num_chunks = partial_counts.len();
 
     if let Some(ref pb) = progress {
         pb.set_position(total_records);
-        pb.set_message("counting");
+        pb.set_message("merging");
     }
 
-    let results: Vec<AHashMap<String, u64>> = chunks
-        .into_par_iter()
-        .map(|chunk| {
-            let mut local_counts = AHashMap::with_capacity(chunk.len() / 2);
-            for seq in chunk {
-                *local_counts.entry(seq).or_insert(0) += 1;
-            }
-            local_counts
-        })
-        .collect();
-
-    let final_counts = results
+    let final_counts = partial_counts
         .into_par_iter()
         .reduce(AHashMap::new, |mut acc, map| {
             for (seq, count) in map {
