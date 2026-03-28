@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use seqtable::output::{SequenceRecord, save_csv, save_parquet};
-use seqtable::{count_sequences, count_sequences_sequential, prepare_records};
+use seqtable::output::{save_csv, save_parquet};
+use seqtable::{SequenceRecord, count_sequences, count_sequences_sequential, prepare_records};
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
