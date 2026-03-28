@@ -1,5 +1,3 @@
-#![allow(clippy::collapsible_if)]
-
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use console::Term;
