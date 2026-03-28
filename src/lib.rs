@@ -8,36 +8,43 @@ use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use std::path::Path;
 
-/// Dual HashMap: packed u128 keys for short ACGT-only sequences, Vec<u8> fallback for the rest.
+/// 2-bit packed DNA key: up to 160bp ACGT-only sequences in 48 bytes.
+/// data[0..5] stores 2-bit encoded bases (LSB-first), len stores sequence length.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct PackedDna {
+    data: [u64; 5],
+    len: u8,
+}
+
+/// Dual HashMap: PackedDna keys for ≤160bp ACGT-only, Vec<u8> fallback for the rest.
 #[derive(Clone, Default)]
 pub struct DualSeqCounts {
-    /// ≤32bp ACGT-only sequences packed as u128 (upper 64 bits = length, lower 64 = 2-bit encoded)
-    pub short: AHashMap<u128, u64>,
-    /// Fallback for >32bp or non-ACGT sequences
+    pub packed: AHashMap<PackedDna, u64>,
+    /// Fallback for >160bp or non-ACGT sequences
     pub long: AHashMap<Vec<u8>, u64>,
 }
 
 impl DualSeqCounts {
     pub fn new() -> Self {
         Self {
-            short: AHashMap::new(),
+            packed: AHashMap::new(),
             long: AHashMap::new(),
         }
     }
 
-    pub fn with_capacity(short_cap: usize, long_cap: usize) -> Self {
+    pub fn with_capacity(packed_cap: usize, long_cap: usize) -> Self {
         Self {
-            short: AHashMap::with_capacity(short_cap),
+            packed: AHashMap::with_capacity(packed_cap),
             long: AHashMap::with_capacity(long_cap),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.short.len() + self.long.len()
+        self.packed.len() + self.long.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.short.is_empty() && self.long.is_empty()
+        self.packed.is_empty() && self.long.is_empty()
     }
 }
 
@@ -55,38 +62,41 @@ const DNA_ENCODE: [u8; 256] = {
     table
 };
 
-/// Pack a DNA sequence (≤32bp, ACGT-only) into a u128.
-/// Upper 64 bits store the length, lower 64 bits store 2-bit encoded bases.
-/// Returns None for sequences >32bp or containing non-ACGT bases.
+const MAX_PACKED_BP: usize = 160;
+
+/// Pack a DNA sequence (≤160bp, ACGT-only) into a PackedDna.
+/// Returns None for sequences >160bp or containing non-ACGT bases.
 #[inline]
-pub fn pack_dna(seq: &[u8]) -> Option<u128> {
-    if seq.len() > 32 {
+pub fn pack_dna(seq: &[u8]) -> Option<PackedDna> {
+    if seq.len() > MAX_PACKED_BP {
         return None;
     }
-    let mut packed: u64 = 0;
-    for &base in seq {
+    let mut data = [0u64; 5];
+    for (i, &base) in seq.iter().enumerate() {
         let bits = DNA_ENCODE[base as usize];
         if bits == 0xFF {
             return None;
         }
-        packed = (packed << 2) | bits as u64;
+        let word = i >> 5; // i / 32
+        let shift = (i & 31) << 1; // (i % 32) * 2
+        data[word] |= (bits as u64) << shift;
     }
-    Some((seq.len() as u128) << 64 | packed as u128)
+    Some(PackedDna {
+        data,
+        len: seq.len() as u8,
+    })
 }
 
-/// Unpack a u128 key back into a DNA sequence.
-pub fn unpack_dna(key: u128) -> Vec<u8> {
-    let len = (key >> 64) as usize;
-    let packed = key as u64;
+/// Unpack a PackedDna key back into a DNA sequence.
+pub fn unpack_dna(key: &PackedDna) -> Vec<u8> {
+    const BASES: [u8; 4] = [b'A', b'C', b'G', b'T'];
+    let len = key.len as usize;
     let mut seq = Vec::with_capacity(len);
-    for i in (0..len).rev() {
-        seq.push(match (packed >> (i * 2)) & 3 {
-            0 => b'A',
-            1 => b'C',
-            2 => b'G',
-            3 => b'T',
-            _ => unreachable!(),
-        });
+    for i in 0..len {
+        let word = i >> 5;
+        let shift = (i & 31) << 1;
+        let bits = (key.data[word] >> shift) & 3;
+        seq.push(BASES[bits as usize]);
     }
     seq
 }
@@ -154,9 +164,9 @@ pub fn count_sequences(
         None
     };
 
-    let mut partial_short: Vec<AHashMap<u128, u64>> = Vec::new();
+    let mut partial_packed: Vec<AHashMap<PackedDna, u64>> = Vec::new();
     let mut partial_long: Vec<AHashMap<Vec<u8>, u64>> = Vec::new();
-    let mut local_short: AHashMap<u128, u64> = AHashMap::with_capacity(chunk_size / 2);
+    let mut local_packed: AHashMap<PackedDna, u64> = AHashMap::with_capacity(chunk_size / 2);
     let mut local_long: AHashMap<Vec<u8>, u64> = AHashMap::new();
     let mut chunk_count = 0usize;
     let mut total_records = 0u64;
@@ -167,10 +177,10 @@ pub fn count_sequences(
         total_records += 1;
 
         if let Some(key) = pack_dna(raw.as_ref()) {
-            if let Some(count) = local_short.get_mut(&key) {
+            if let Some(count) = local_packed.get_mut(&key) {
                 *count += 1;
             } else {
-                local_short.insert(key, 1);
+                local_packed.insert(key, 1);
             }
         } else if let Some(count) = local_long.get_mut(raw.as_ref()) {
             *count += 1;
@@ -186,20 +196,20 @@ pub fn count_sequences(
         }
 
         if chunk_count >= chunk_size {
-            partial_short.push(std::mem::take(&mut local_short));
+            partial_packed.push(std::mem::take(&mut local_packed));
             partial_long.push(std::mem::take(&mut local_long));
-            local_short = AHashMap::with_capacity(chunk_size / 2);
+            local_packed = AHashMap::with_capacity(chunk_size / 2);
             local_long = AHashMap::new();
             chunk_count = 0;
         }
     }
 
-    if !local_short.is_empty() || !local_long.is_empty() {
-        partial_short.push(local_short);
+    if !local_packed.is_empty() || !local_long.is_empty() {
+        partial_packed.push(local_packed);
         partial_long.push(local_long);
     }
 
-    let num_chunks = partial_short.len();
+    let num_chunks = partial_packed.len();
 
     if let Some(ref pb) = progress {
         pb.set_position(total_records);
@@ -207,17 +217,17 @@ pub fn count_sequences(
     }
 
     // Merge short maps
-    let final_short = if partial_short.is_empty() {
+    let final_packed = if partial_packed.is_empty() {
         AHashMap::new()
     } else {
-        let max_idx = partial_short
+        let max_idx = partial_packed
             .iter()
             .enumerate()
             .max_by_key(|(_, m)| m.len())
             .map(|(i, _)| i)
             .unwrap();
-        let mut base = partial_short.swap_remove(max_idx);
-        for map in partial_short {
+        let mut base = partial_packed.swap_remove(max_idx);
+        for map in partial_packed {
             for (seq, count) in map {
                 *base.entry(seq).or_insert(0) += count;
             }
@@ -256,7 +266,7 @@ pub fn count_sequences(
 
     Ok((
         DualSeqCounts {
-            short: final_short,
+            packed: final_packed,
             long: final_long,
         },
         total_records,
@@ -277,17 +287,17 @@ pub fn count_sequences_sequential(
 
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let estimated_unique = (file_size / 2000).max(64) as usize;
-    let mut counts = DualSeqCounts::with_capacity(estimated_unique, estimated_unique / 4);
+    let mut counts = DualSeqCounts::with_capacity(estimated_unique, estimated_unique / 10);
     let mut total_records = 0u64;
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
         let raw = record.seq();
         if let Some(key) = pack_dna(raw.as_ref()) {
-            if let Some(count) = counts.short.get_mut(&key) {
+            if let Some(count) = counts.packed.get_mut(&key) {
                 *count += 1;
             } else {
-                counts.short.insert(key, 1);
+                counts.packed.insert(key, 1);
             }
         } else if let Some(count) = counts.long.get_mut(raw.as_ref()) {
             *count += 1;
@@ -317,13 +327,13 @@ pub fn prepare_records(
         }
     };
 
-    let total_unique = counts.short.len() + counts.long.len();
+    let total_unique = counts.packed.len() + counts.long.len();
     let mut records: Vec<SequenceRecord> = Vec::with_capacity(total_unique);
 
     // Unpack short (2-bit encoded) sequences
-    for (key, count) in counts.short {
+    for (key, count) in counts.packed {
         records.push(SequenceRecord {
-            sequence: unpack_dna(key),
+            sequence: unpack_dna(&key),
             count,
             rpm: make_rpm(count),
         });
