@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use arrow::array::{Float64Array, StringArray, UInt64Array};
+use arrow::array::{Float64Array, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use clap::ValueEnum;
@@ -31,9 +31,45 @@ impl OutputFormat {
 }
 
 pub struct SequenceRecord {
-    pub sequence: Vec<u8>,
+    pub sequence: SequenceData,
     pub count: u64,
     pub rpm: Option<f64>,
+}
+
+/// Holds sequence data — either 2-bit packed (no heap allocation) or raw bytes.
+pub enum SequenceData {
+    Packed(crate::PackedDna),
+    Raw(Vec<u8>),
+}
+
+impl SequenceRecord {
+    /// Unpack into a new String (for parquet batch building).
+    pub fn sequence_string(&self) -> String {
+        match &self.sequence {
+            SequenceData::Packed(p) => {
+                // ACGT bytes are valid ASCII/UTF-8
+                unsafe { String::from_utf8_unchecked(crate::unpack_dna(p)) }
+            }
+            SequenceData::Raw(v) => std::str::from_utf8(v)
+                .expect("FASTQ sequence is not valid UTF-8")
+                .to_owned(),
+        }
+    }
+
+    /// Write sequence as &str into a reusable buffer (for CSV row-by-row writing).
+    pub fn sequence_str<'a>(&'a self, buf: &'a mut Vec<u8>) -> &'a str {
+        match &self.sequence {
+            SequenceData::Packed(p) => {
+                buf.clear();
+                crate::unpack_dna_into(p, buf);
+                // ACGT-only, always valid UTF-8
+                unsafe { std::str::from_utf8_unchecked(buf) }
+            }
+            SequenceData::Raw(v) => {
+                std::str::from_utf8(v).expect("FASTQ sequence is not valid UTF-8")
+            }
+        }
+    }
 }
 
 pub fn save_output(
@@ -67,18 +103,17 @@ pub fn save_parquet(
     let schema = Arc::new(Schema::new(fields));
 
     let capacity = records.len();
-    let mut sequences = Vec::with_capacity(capacity);
     let mut counts = Vec::with_capacity(capacity);
+    let mut buf = Vec::with_capacity(160);
 
+    // Build StringArray via builder to avoid intermediate String allocations
+    let mut seq_builder = arrow::array::StringBuilder::with_capacity(capacity, capacity * 151);
     for record in records {
-        // FASTQ sequences are ASCII — from_utf8 is cheap for ASCII data
-        sequences.push(
-            std::str::from_utf8(&record.sequence).expect("FASTQ sequence is not valid UTF-8"),
-        );
+        let seq = record.sequence_str(&mut buf);
+        seq_builder.append_value(seq);
         counts.push(record.count);
     }
-
-    let seq_array = StringArray::from(sequences);
+    let seq_array = seq_builder.finish();
     let count_array = UInt64Array::from(counts);
 
     let mut arrays: Vec<Arc<dyn arrow::array::Array>> =
@@ -130,8 +165,9 @@ pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -
     let mut count_buf = String::with_capacity(16);
     let mut rpm_buf = String::with_capacity(16);
 
+    let mut seq_buf = Vec::with_capacity(160);
     for record in records {
-        let seq = std::str::from_utf8(&record.sequence).expect("FASTQ sequence is not valid UTF-8");
+        let seq = record.sequence_str(&mut seq_buf);
         count_buf.clear();
         write!(count_buf, "{}", record.count).unwrap();
         if let Some(rpm) = record.rpm {
