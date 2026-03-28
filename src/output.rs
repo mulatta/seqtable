@@ -126,12 +126,20 @@ pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -
         csv_writer.write_record(["sequence", "count"])?;
     }
 
+    use std::fmt::Write as _;
+    let mut count_buf = String::with_capacity(16);
+    let mut rpm_buf = String::with_capacity(16);
+
     for record in records {
         let seq = std::str::from_utf8(&record.sequence).expect("FASTQ sequence is not valid UTF-8");
+        count_buf.clear();
+        write!(count_buf, "{}", record.count).unwrap();
         if let Some(rpm) = record.rpm {
-            csv_writer.write_record([seq, &record.count.to_string(), &format!("{:.2}", rpm)])?;
+            rpm_buf.clear();
+            write!(rpm_buf, "{:.2}", rpm).unwrap();
+            csv_writer.write_record([seq, &count_buf, &rpm_buf])?;
         } else {
-            csv_writer.write_record([seq, &record.count.to_string()])?;
+            csv_writer.write_record([seq, &count_buf])?;
         }
     }
 

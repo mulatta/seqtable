@@ -6,7 +6,6 @@ use ahash::AHashMap;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
-use rayon::prelude::*;
 use std::path::Path;
 
 pub type SeqCounts = AHashMap<Vec<u8>, u64>;
@@ -51,12 +50,12 @@ pub fn count_sequences(
     chunk_size: usize,
     show_progress: bool,
 ) -> Result<(SeqCounts, u64)> {
-    let mut reader = parse_fastx_file(file_path)
-        .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
-
     if chunk_size == 0 {
         return count_sequences_sequential(file_path, show_progress);
     }
+
+    let mut reader = parse_fastx_file(file_path)
+        .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
     let file_size = std::fs::metadata(file_path)?.len();
     let estimated_records = (file_size / 100).max(1000);
@@ -118,14 +117,24 @@ pub fn count_sequences(
         pb.set_message("merging");
     }
 
-    let final_counts = partial_counts
-        .into_par_iter()
-        .reduce(AHashMap::new, |mut acc, map| {
+    let final_counts = if partial_counts.is_empty() {
+        AHashMap::new()
+    } else {
+        // Use the largest partial as base to minimize re-insertions
+        let max_idx = partial_counts
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, m)| m.len())
+            .map(|(i, _)| i)
+            .unwrap();
+        let mut base = partial_counts.swap_remove(max_idx);
+        for map in partial_counts {
             for (seq, count) in map {
-                *acc.entry(seq).or_insert(0) += count;
+                *base.entry(seq).or_insert(0) += count;
             }
-            acc
-        });
+        }
+        base
+    };
 
     if let Some(pb) = progress {
         pb.finish_and_clear();
@@ -152,7 +161,9 @@ pub fn count_sequences_sequential(
         std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
-    let mut counts: SeqCounts = AHashMap::new();
+    let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    let estimated_unique = (file_size / 2000).max(64) as usize;
+    let mut counts: SeqCounts = AHashMap::with_capacity(estimated_unique);
     let mut total_records = 0u64;
 
     while let Some(record) = reader.next() {
