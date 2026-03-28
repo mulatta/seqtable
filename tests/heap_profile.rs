@@ -32,11 +32,11 @@ fn profile_full_pipeline() {
     let (counts, total) = count_sequences(&path, 0, false).unwrap();
 
     // Phase 2: Prepare
-    let records = prepare_records(counts, total, false);
+    let records = prepare_records(counts);
 
     // Phase 3: Output
     let tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
-    save_csv(&records, tmp.path(), b',').unwrap();
+    save_csv(&records, tmp.path(), b',', total, false).unwrap();
 
     // Profiler drops here, writes dhat-heap.json
 }
@@ -81,7 +81,7 @@ fn profile_per_phase() {
         // Phase 2: Prepare
         {
             let _prof = dhat::Profiler::builder().testing().build();
-            let _records = prepare_records(counts.clone(), total, false);
+            let _records = prepare_records(counts.clone());
             let s = dhat::HeapStats::get();
             eprintln!(
                 "  prepare: peak={:>10} bytes ({:>6} blocks), total={:>10} bytes ({:>6} allocs)",
@@ -89,13 +89,13 @@ fn profile_per_phase() {
             );
         }
 
-        let records = prepare_records(counts, total, false);
+        let records = prepare_records(counts);
 
         // Phase 3: Output CSV
         {
             let _prof = dhat::Profiler::builder().testing().build();
             let tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
-            save_csv(&records, tmp.path(), b',').unwrap();
+            save_csv(&records, tmp.path(), b',', total, false).unwrap();
             let s = dhat::HeapStats::get();
             eprintln!(
                 "  csv:     peak={:>10} bytes ({:>6} blocks), total={:>10} bytes ({:>6} allocs)",
@@ -111,6 +111,8 @@ fn profile_per_phase() {
                 &records,
                 tmp.path(),
                 parquet::basic::Compression::ZSTD(Default::default()),
+                total,
+                false,
             )
             .unwrap();
             let s = dhat::HeapStats::get();

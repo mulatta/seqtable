@@ -320,19 +320,7 @@ pub fn count_sequences_sequential(
     Ok((counts, total_records))
 }
 
-pub fn prepare_records(
-    counts: DualSeqCounts,
-    total_reads: u64,
-    include_rpm: bool,
-) -> Vec<SequenceRecord> {
-    let make_rpm = |count: u64| -> Option<f64> {
-        if include_rpm {
-            Some((count as f64 / total_reads as f64) * 1_000_000.0)
-        } else {
-            None
-        }
-    };
-
+pub fn prepare_records(counts: DualSeqCounts) -> Vec<SequenceRecord> {
     let total_unique = counts.packed.len() + counts.long.len();
     let mut records: Vec<SequenceRecord> = Vec::with_capacity(total_unique);
 
@@ -340,7 +328,6 @@ pub fn prepare_records(
         records.push(SequenceRecord {
             sequence: SequenceData::Packed(key),
             count,
-            rpm: make_rpm(count),
         });
     }
 
@@ -348,7 +335,6 @@ pub fn prepare_records(
         records.push(SequenceRecord {
             sequence: SequenceData::Raw(seq),
             count,
-            rpm: make_rpm(count),
         });
     }
 

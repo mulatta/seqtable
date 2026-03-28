@@ -33,7 +33,6 @@ impl OutputFormat {
 pub struct SequenceRecord {
     pub sequence: SequenceData,
     pub count: u64,
-    pub rpm: Option<f64>,
 }
 
 /// Holds sequence data — either 2-bit packed (no heap allocation) or raw bytes.
@@ -43,20 +42,7 @@ pub enum SequenceData {
 }
 
 impl SequenceRecord {
-    /// Unpack into a new String (for parquet batch building).
-    pub fn sequence_string(&self) -> String {
-        match &self.sequence {
-            SequenceData::Packed(p) => {
-                // ACGT bytes are valid ASCII/UTF-8
-                unsafe { String::from_utf8_unchecked(crate::unpack_dna(p)) }
-            }
-            SequenceData::Raw(v) => std::str::from_utf8(v)
-                .expect("FASTQ sequence is not valid UTF-8")
-                .to_owned(),
-        }
-    }
-
-    /// Write sequence as &str into a reusable buffer (for CSV row-by-row writing).
+    /// Write sequence as &str into a reusable buffer (avoids allocation).
     pub fn sequence_str<'a>(&'a self, buf: &'a mut Vec<u8>) -> &'a str {
         match &self.sequence {
             SequenceData::Packed(p) => {
@@ -77,11 +63,15 @@ pub fn save_output(
     output_path: &Path,
     format: &OutputFormat,
     compression: parquet::basic::Compression,
+    total_reads: u64,
+    include_rpm: bool,
 ) -> Result<()> {
     match format {
-        OutputFormat::Parquet => save_parquet(records, output_path, compression)?,
-        OutputFormat::Csv => save_csv(records, output_path, b',')?,
-        OutputFormat::Tsv => save_csv(records, output_path, b'\t')?,
+        OutputFormat::Parquet => {
+            save_parquet(records, output_path, compression, total_reads, include_rpm)?
+        }
+        OutputFormat::Csv => save_csv(records, output_path, b',', total_reads, include_rpm)?,
+        OutputFormat::Tsv => save_csv(records, output_path, b'\t', total_reads, include_rpm)?,
     }
     Ok(())
 }
@@ -90,13 +80,15 @@ pub fn save_parquet(
     records: &[SequenceRecord],
     output_path: &Path,
     compression: parquet::basic::Compression,
+    total_reads: u64,
+    include_rpm: bool,
 ) -> Result<()> {
     let mut fields = vec![
         Field::new("sequence", DataType::Utf8, false),
         Field::new("count", DataType::UInt64, false),
     ];
 
-    if records.first().and_then(|r| r.rpm).is_some() {
+    if include_rpm {
         fields.push(Field::new("rpm", DataType::Float64, false));
     }
 
@@ -119,8 +111,9 @@ pub fn save_parquet(
     let mut arrays: Vec<Arc<dyn arrow::array::Array>> =
         vec![Arc::new(seq_array), Arc::new(count_array)];
 
-    if records.first().and_then(|r| r.rpm).is_some() {
-        let rpm_values: Vec<f64> = records.iter().map(|r| r.rpm.unwrap()).collect();
+    if include_rpm {
+        let rpm_scale = 1_000_000.0 / total_reads as f64;
+        let rpm_values: Vec<f64> = records.iter().map(|r| r.count as f64 * rpm_scale).collect();
         arrays.push(Arc::new(Float64Array::from(rpm_values)));
     }
 
@@ -143,7 +136,13 @@ pub fn save_parquet(
     Ok(())
 }
 
-pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -> Result<()> {
+pub fn save_csv(
+    records: &[SequenceRecord],
+    output_path: &Path,
+    delimiter: u8,
+    total_reads: u64,
+    include_rpm: bool,
+) -> Result<()> {
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create file: {}", output_path.display()))?;
 
@@ -154,8 +153,7 @@ pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -
         .buffer_capacity(WRITE_BUFFER_SIZE)
         .from_writer(writer);
 
-    let has_rpm = records.first().and_then(|r| r.rpm).is_some();
-    if has_rpm {
+    if include_rpm {
         csv_writer.write_record(["sequence", "count", "rpm"])?;
     } else {
         csv_writer.write_record(["sequence", "count"])?;
@@ -164,15 +162,16 @@ pub fn save_csv(records: &[SequenceRecord], output_path: &Path, delimiter: u8) -
     use std::fmt::Write as _;
     let mut count_buf = String::with_capacity(16);
     let mut rpm_buf = String::with_capacity(16);
+    let rpm_scale = 1_000_000.0 / total_reads as f64;
 
     let mut seq_buf = Vec::with_capacity(160);
     for record in records {
         let seq = record.sequence_str(&mut seq_buf);
         count_buf.clear();
         write!(count_buf, "{}", record.count).unwrap();
-        if let Some(rpm) = record.rpm {
+        if include_rpm {
             rpm_buf.clear();
-            write!(rpm_buf, "{:.2}", rpm).unwrap();
+            write!(rpm_buf, "{:.2}", record.count as f64 * rpm_scale).unwrap();
             csv_writer.write_record([seq, &count_buf, &rpm_buf])?;
         } else {
             csv_writer.write_record([seq, &count_buf])?;
