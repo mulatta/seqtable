@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use console::Term;
+use rayon::prelude::*;
 use seqtable::output::OutputFormat;
 use seqtable::{
     FASTQ_EXTENSIONS, calculate_chunk_size, count_sequences, format_count, prepare_records,
@@ -101,8 +102,17 @@ fn main() -> Result<()> {
 
     let total_start = Instant::now();
 
-    for (idx, input_file) in args.input.iter().enumerate() {
-        process_file(input_file, &args, idx + 1, quiet, is_tty)?;
+    let n_files = args.input.len();
+    if n_files == 1 {
+        process_file(&args.input[0], &args, 1, n_files, quiet, is_tty)?;
+    } else {
+        args.input
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(idx, input_file)| {
+                // Disable progress bars in parallel mode to avoid interleaving
+                process_file(input_file, &args, idx + 1, n_files, quiet, false)
+            })?;
     }
 
     if !quiet {
@@ -121,6 +131,7 @@ fn process_file(
     input_path: &Path,
     args: &Args,
     file_num: usize,
+    total_files: usize,
     quiet: bool,
     is_tty: bool,
 ) -> Result<()> {
@@ -151,7 +162,7 @@ fn process_file(
         .unwrap_or("?");
 
     if !quiet {
-        eprintln!("[{}/{}] {}", file_num, args.input.len(), input_display);
+        eprintln!("[{}/{}] {}", file_num, total_files, input_display);
     }
 
     let file_size = std::fs::metadata(input_path)?.len();
