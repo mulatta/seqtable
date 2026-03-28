@@ -1,6 +1,6 @@
 pub mod output;
 
-pub use output::{OutputFormat, SequenceRecord};
+pub use output::{OutputFormat, SequenceData, SequenceRecord};
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
@@ -89,16 +89,22 @@ pub fn pack_dna(seq: &[u8]) -> Option<PackedDna> {
 
 /// Unpack a PackedDna key back into a DNA sequence.
 pub fn unpack_dna(key: &PackedDna) -> Vec<u8> {
+    let mut seq = Vec::with_capacity(key.len as usize);
+    unpack_dna_into(key, &mut seq);
+    seq
+}
+
+/// Unpack a PackedDna key into an existing buffer (avoids allocation).
+pub fn unpack_dna_into(key: &PackedDna, buf: &mut Vec<u8>) {
     const BASES: [u8; 4] = [b'A', b'C', b'G', b'T'];
     let len = key.len as usize;
-    let mut seq = Vec::with_capacity(len);
+    buf.reserve(len);
     for i in 0..len {
         let word = i >> 5;
         let shift = (i & 31) << 1;
         let bits = (key.data[word] >> shift) & 3;
-        seq.push(BASES[bits as usize]);
+        buf.push(BASES[bits as usize]);
     }
-    seq
 }
 
 pub const FASTQ_EXTENSIONS: &[&str] = &[".fastq.gz", ".fq.gz", ".fastq", ".fq"];
@@ -330,19 +336,17 @@ pub fn prepare_records(
     let total_unique = counts.packed.len() + counts.long.len();
     let mut records: Vec<SequenceRecord> = Vec::with_capacity(total_unique);
 
-    // Unpack short (2-bit encoded) sequences
     for (key, count) in counts.packed {
         records.push(SequenceRecord {
-            sequence: unpack_dna(&key),
+            sequence: SequenceData::Packed(key),
             count,
             rpm: make_rpm(count),
         });
     }
 
-    // Long sequences are already Vec<u8>
     for (seq, count) in counts.long {
         records.push(SequenceRecord {
-            sequence: seq,
+            sequence: SequenceData::Raw(seq),
             count,
             rpm: make_rpm(count),
         });
