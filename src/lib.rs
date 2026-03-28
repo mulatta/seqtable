@@ -8,8 +8,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use std::path::Path;
 
-pub type SeqCounts = AHashMap<Vec<u8>, u64>;
-
 /// Dual HashMap: packed u128 keys for short ACGT-only sequences, Vec<u8> fallback for the rest.
 #[derive(Clone, Default)]
 pub struct DualSeqCounts {
@@ -127,7 +125,6 @@ pub fn format_count(n: u64) -> String {
     }
 }
 
-#[allow(clippy::collapsible_if)]
 pub fn count_sequences(
     file_path: &Path,
     chunk_size: usize,
@@ -182,10 +179,10 @@ pub fn count_sequences(
         }
         chunk_count += 1;
 
-        if let Some(ref pb) = progress {
-            if total_records.is_multiple_of(10000) {
-                pb.set_position(total_records);
-            }
+        if let Some(ref pb) = progress
+            && total_records.is_multiple_of(10000)
+        {
+            pb.set_position(total_records);
         }
 
         if chunk_count >= chunk_size {
