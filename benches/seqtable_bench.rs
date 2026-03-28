@@ -55,7 +55,7 @@ fn bench_fixtures_gz() -> Vec<Fixture> {
 
 fn load_records_from_fixture(path: &Path) -> Vec<SequenceRecord> {
     let (counts, total) = count_sequences_sequential(path, false).unwrap();
-    prepare_records(counts, total, false)
+    prepare_records(counts)
 }
 
 // --- Benchmarks ---
@@ -127,20 +127,13 @@ fn bench_prepare_records(c: &mut Criterion) {
     let mut group = c.benchmark_group("prepare_records");
 
     for f in &fixtures {
-        let (counts, total) = count_sequences_sequential(&f.path, false).unwrap();
+        let (counts, _total) = count_sequences_sequential(&f.path, false).unwrap();
         let n = counts.len() as u64;
         group.throughput(Throughput::Elements(n));
 
-        group.bench_with_input(
-            BenchmarkId::new("no_rpm", f.name),
-            &(counts.clone(), total),
-            |b, (c, t)| b.iter(|| prepare_records(c.clone(), *t, false)),
-        );
-        group.bench_with_input(
-            BenchmarkId::new("with_rpm", f.name),
-            &(counts, total),
-            |b, (c, t)| b.iter(|| prepare_records(c.clone(), *t, true)),
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(f.name), &counts, |b, c| {
+            b.iter(|| prepare_records(c.clone()))
+        });
     }
 
     group.finish();
@@ -161,7 +154,7 @@ fn bench_save_csv(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(f.name), &records, |b, recs| {
             b.iter(|| {
                 let tmp = NamedTempFile::new().unwrap();
-                save_csv(recs, tmp.path(), b',').unwrap()
+                save_csv(recs, tmp.path(), b',', 10_000, false).unwrap()
             })
         });
     }
@@ -197,7 +190,7 @@ fn bench_save_parquet(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new(name, f.name), &comp, |b, compression| {
             b.iter(|| {
                 let tmp = NamedTempFile::new().unwrap();
-                save_parquet(&records, tmp.path(), *compression).unwrap()
+                save_parquet(&records, tmp.path(), *compression, 10_000, false).unwrap()
             })
         });
     }

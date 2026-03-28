@@ -173,7 +173,7 @@ fn process_file(
     let unique_count = counts.len() as u64;
 
     // Prepare
-    let records = prepare_records(counts, total_reads, args.rpm);
+    let records = prepare_records(counts);
 
     // Output
     if !quiet {
@@ -185,6 +185,8 @@ fn process_file(
         &output_path,
         &args.format,
         args.compression.to_parquet(),
+        total_reads,
+        args.rpm,
     )?;
     if !quiet {
         eprintln!("done");
