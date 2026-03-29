@@ -19,9 +19,9 @@ pub struct PackedDna {
 /// Dual HashMap: PackedDna keys for ≤160bp ACGT-only, Vec<u8> fallback for the rest.
 #[derive(Clone, Default)]
 pub struct DualSeqCounts {
-    pub packed: AHashMap<PackedDna, u64>,
+    pub(crate) packed: AHashMap<PackedDna, u64>,
     /// Fallback for >160bp or non-ACGT sequences
-    pub long: AHashMap<Vec<u8>, u64>,
+    pub(crate) long: AHashMap<Vec<u8>, u64>,
 }
 
 impl DualSeqCounts {
