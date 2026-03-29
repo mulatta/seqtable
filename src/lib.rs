@@ -262,16 +262,36 @@ pub fn count_sequences_sequential(
     file_path: &Path,
     show_progress: bool,
 ) -> Result<(DualSeqCounts, u64)> {
-    let mut reader = parse_fastx_file(file_path)
+    let reader = parse_fastx_file(file_path)
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
+    let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
+    let estimated_unique = (file_size / 2000).max(64) as usize;
+
+    count_from_reader(reader, estimated_unique, show_progress)
+}
+
+/// Count sequences from stdin or any reader.
+pub fn count_sequences_from_reader<R: std::io::Read + Send + 'static>(
+    reader: R,
+    show_progress: bool,
+) -> Result<(DualSeqCounts, u64)> {
+    let fastx =
+        needletail::parse_fastx_reader(reader).context("Failed to parse FASTQ from stdin")?;
+
+    count_from_reader(fastx, 64, show_progress)
+}
+
+fn count_from_reader(
+    mut reader: Box<dyn needletail::FastxReader>,
+    estimated_unique: usize,
+    show_progress: bool,
+) -> Result<(DualSeqCounts, u64)> {
     if show_progress {
         eprint!("      {:<10} ... ", "counting");
         std::io::Write::flush(&mut std::io::stderr()).ok();
     }
 
-    let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
-    let estimated_unique = (file_size / 2000).max(64) as usize;
     let mut counts = DualSeqCounts::with_capacity(estimated_unique, estimated_unique / 10);
     let mut total_records = 0u64;
 

@@ -20,8 +20,10 @@ fn fixture_path(name: &str) -> Option<std::path::PathBuf> {
     p.exists().then_some(p)
 }
 
-/// Full pipeline profile — generates dhat-heap.json for viewer
+/// Full pipeline profile — generates dhat-heap.json for viewer.
+/// Run manually: cargo test --test heap_profile profile_full_pipeline -- --ignored --test-threads=1
 #[test]
+#[ignore]
 fn profile_full_pipeline() {
     let Some(path) = fixture_path("bn_short_mid_10000.fastq") else {
         eprintln!("skip: run cargo run --example generate_fixtures --release -- --size bench");

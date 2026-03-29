@@ -82,6 +82,7 @@ pub fn save_parquet(
     total_reads: u64,
     include_rpm: bool,
 ) -> Result<()> {
+    let include_rpm = include_rpm && total_reads > 0;
     let mut fields = vec![
         Field::new("sequence", DataType::Utf8, false),
         Field::new("count", DataType::UInt64, false),
