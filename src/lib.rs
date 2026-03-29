@@ -47,6 +47,22 @@ impl DualSeqCounts {
         self.packed.is_empty() && self.long.is_empty()
     }
 
+    /// Consume and return (sequence, count) pairs sorted by count descending.
+    pub fn into_sorted_vec(self) -> Vec<(Vec<u8>, u64)> {
+        let mut result = Vec::with_capacity(self.packed.len() + self.long.len());
+        let mut buf = Vec::with_capacity(160);
+        for (key, count) in self.packed {
+            buf.clear();
+            unpack_dna_into(&key, &mut buf);
+            result.push((buf.clone(), count));
+        }
+        for (seq, count) in self.long {
+            result.push((seq, count));
+        }
+        result.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        result
+    }
+
     /// Insert or increment a sequence count. Packs ACGT-only ≤160bp sequences.
     #[inline]
     pub fn insert(&mut self, seq: std::borrow::Cow<'_, [u8]>) {
@@ -61,6 +77,21 @@ impl DualSeqCounts {
         } else {
             self.long.insert(seq.into_owned(), 1);
         }
+    }
+}
+
+impl IntoIterator for DualSeqCounts {
+    type Item = (Vec<u8>, u64);
+    type IntoIter = Box<dyn Iterator<Item = (Vec<u8>, u64)>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let mut buf = Vec::with_capacity(160);
+        let packed = self.packed.into_iter().map(move |(key, count)| {
+            buf.clear();
+            unpack_dna_into(&key, &mut buf);
+            (buf.clone(), count)
+        });
+        Box::new(packed.chain(self.long))
     }
 }
 
