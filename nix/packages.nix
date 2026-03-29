@@ -13,7 +13,7 @@
     commonArgs = {
       inherit src;
       pname = "seqtable";
-      version = "0.1.0";
+      version = "0.2.0";
       nativeBuildInputs = with pkgs; [pkg-config cmake];
     };
 

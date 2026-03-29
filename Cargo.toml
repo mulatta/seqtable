@@ -1,7 +1,12 @@
 [package]
 name = "seqtable"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
+description = "High-performance FASTQ sequence counter"
+license = "MIT"
+repository = "https://github.com/mulatta/seqtable"
+keywords = ["bioinformatics", "fastq", "sequence", "counting"]
+categories = ["command-line-utilities", "science"]
 
 [features]
 default = ["cli"]
