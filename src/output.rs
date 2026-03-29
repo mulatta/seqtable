@@ -6,7 +6,6 @@ use clap::ValueEnum;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -111,7 +110,7 @@ pub fn save_parquet(
     let mut arrays: Vec<Arc<dyn arrow::array::Array>> =
         vec![Arc::new(seq_array), Arc::new(count_array)];
 
-    if include_rpm {
+    if include_rpm && total_reads > 0 {
         let rpm_scale = 1_000_000.0 / total_reads as f64;
         let rpm_values: Vec<f64> = records.iter().map(|r| r.count as f64 * rpm_scale).collect();
         arrays.push(Arc::new(Float64Array::from(rpm_values)));
@@ -146,13 +145,12 @@ pub fn save_csv(
     let file = File::create(output_path)
         .with_context(|| format!("Failed to create file: {}", output_path.display()))?;
 
-    let writer = BufWriter::with_capacity(WRITE_BUFFER_SIZE, file);
-
     let mut csv_writer = csv::WriterBuilder::new()
         .delimiter(delimiter)
         .buffer_capacity(WRITE_BUFFER_SIZE)
-        .from_writer(writer);
+        .from_writer(file);
 
+    let include_rpm = include_rpm && total_reads > 0;
     if include_rpm {
         csv_writer.write_record(["sequence", "count", "rpm"])?;
     } else {
@@ -162,7 +160,11 @@ pub fn save_csv(
     use std::fmt::Write as _;
     let mut count_buf = String::with_capacity(16);
     let mut rpm_buf = String::with_capacity(16);
-    let rpm_scale = 1_000_000.0 / total_reads as f64;
+    let rpm_scale = if include_rpm {
+        1_000_000.0 / total_reads as f64
+    } else {
+        0.0
+    };
 
     let mut seq_buf = Vec::with_capacity(160);
     for record in records {

@@ -46,6 +46,22 @@ impl DualSeqCounts {
     pub fn is_empty(&self) -> bool {
         self.packed.is_empty() && self.long.is_empty()
     }
+
+    /// Insert or increment a sequence count. Packs ACGT-only ≤160bp sequences.
+    #[inline]
+    pub fn insert(&mut self, seq: std::borrow::Cow<'_, [u8]>) {
+        if let Some(key) = pack_dna(seq.as_ref()) {
+            if let Some(count) = self.packed.get_mut(&key) {
+                *count += 1;
+            } else {
+                self.packed.insert(key, 1);
+            }
+        } else if let Some(count) = self.long.get_mut(seq.as_ref()) {
+            *count += 1;
+        } else {
+            self.long.insert(seq.into_owned(), 1);
+        }
+    }
 }
 
 /// Lookup table: ASCII byte → 2-bit encoding (0xFF = invalid)
@@ -87,13 +103,6 @@ pub fn pack_dna(seq: &[u8]) -> Option<PackedDna> {
     })
 }
 
-/// Unpack a PackedDna key back into a DNA sequence.
-pub fn unpack_dna(key: &PackedDna) -> Vec<u8> {
-    let mut seq = Vec::with_capacity(key.len as usize);
-    unpack_dna_into(key, &mut seq);
-    seq
-}
-
 /// Unpack a PackedDna key into an existing buffer (avoids allocation).
 pub fn unpack_dna_into(key: &PackedDna, buf: &mut Vec<u8>) {
     const BASES: [u8; 4] = [b'A', b'C', b'G', b'T'];
@@ -118,6 +127,25 @@ pub fn validate_fastq(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+fn merge_count_maps<K: Eq + std::hash::Hash>(mut parts: Vec<AHashMap<K, u64>>) -> AHashMap<K, u64> {
+    if parts.is_empty() {
+        return AHashMap::new();
+    }
+    let max_idx = parts
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, m)| m.len())
+        .map(|(i, _)| i)
+        .unwrap();
+    let mut base = parts.swap_remove(max_idx);
+    for map in parts {
+        for (key, count) in map {
+            *base.entry(key).or_insert(0) += count;
+        }
+    }
+    base
 }
 
 pub fn calculate_chunk_size(file_size: u64) -> usize {
@@ -172,47 +200,33 @@ pub fn count_sequences(
 
     let mut partial_packed: Vec<AHashMap<PackedDna, u64>> = Vec::new();
     let mut partial_long: Vec<AHashMap<Vec<u8>, u64>> = Vec::new();
-    let mut local_packed: AHashMap<PackedDna, u64> = AHashMap::with_capacity(chunk_size / 2);
-    let mut local_long: AHashMap<Vec<u8>, u64> = AHashMap::new();
+    let mut local = DualSeqCounts::with_capacity(chunk_size, chunk_size / 10);
     let mut chunk_count = 0usize;
     let mut total_records = 0u64;
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
-        let raw = record.seq();
         total_records += 1;
-
-        if let Some(key) = pack_dna(raw.as_ref()) {
-            if let Some(count) = local_packed.get_mut(&key) {
-                *count += 1;
-            } else {
-                local_packed.insert(key, 1);
-            }
-        } else if let Some(count) = local_long.get_mut(raw.as_ref()) {
-            *count += 1;
-        } else {
-            local_long.insert(raw.into_owned(), 1);
-        }
+        local.insert(record.seq());
         chunk_count += 1;
 
         if let Some(ref pb) = progress
-            && total_records.is_multiple_of(10000)
+            && total_records & 0x3FFF == 0
         {
             pb.set_position(total_records);
         }
 
         if chunk_count >= chunk_size {
-            partial_packed.push(std::mem::take(&mut local_packed));
-            partial_long.push(std::mem::take(&mut local_long));
-            local_packed = AHashMap::with_capacity(chunk_size / 2);
-            local_long = AHashMap::new();
+            partial_packed.push(std::mem::take(&mut local.packed));
+            partial_long.push(std::mem::take(&mut local.long));
+            local = DualSeqCounts::with_capacity(chunk_size, chunk_size / 10);
             chunk_count = 0;
         }
     }
 
-    if !local_packed.is_empty() || !local_long.is_empty() {
-        partial_packed.push(local_packed);
-        partial_long.push(local_long);
+    if !local.is_empty() {
+        partial_packed.push(local.packed);
+        partial_long.push(local.long);
     }
 
     let num_chunks = partial_packed.len();
@@ -222,43 +236,8 @@ pub fn count_sequences(
         pb.set_message("merging");
     }
 
-    // Merge short maps
-    let final_packed = if partial_packed.is_empty() {
-        AHashMap::new()
-    } else {
-        let max_idx = partial_packed
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, m)| m.len())
-            .map(|(i, _)| i)
-            .unwrap();
-        let mut base = partial_packed.swap_remove(max_idx);
-        for map in partial_packed {
-            for (seq, count) in map {
-                *base.entry(seq).or_insert(0) += count;
-            }
-        }
-        base
-    };
-
-    // Merge long maps
-    let final_long = if partial_long.is_empty() {
-        AHashMap::new()
-    } else {
-        let max_idx = partial_long
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, m)| m.len())
-            .map(|(i, _)| i)
-            .unwrap();
-        let mut base = partial_long.swap_remove(max_idx);
-        for map in partial_long {
-            for (seq, count) in map {
-                *base.entry(seq).or_insert(0) += count;
-            }
-        }
-        base
-    };
+    let final_packed = merge_count_maps(partial_packed);
+    let final_long = merge_count_maps(partial_long);
 
     if let Some(pb) = progress {
         pb.finish_and_clear();
@@ -298,18 +277,7 @@ pub fn count_sequences_sequential(
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
-        let raw = record.seq();
-        if let Some(key) = pack_dna(raw.as_ref()) {
-            if let Some(count) = counts.packed.get_mut(&key) {
-                *count += 1;
-            } else {
-                counts.packed.insert(key, 1);
-            }
-        } else if let Some(count) = counts.long.get_mut(raw.as_ref()) {
-            *count += 1;
-        } else {
-            counts.long.insert(raw.into_owned(), 1);
-        }
+        counts.insert(record.seq());
         total_records += 1;
     }
 

@@ -23,8 +23,10 @@ fn fixture_path(name: &str) -> Option<std::path::PathBuf> {
 /// Full pipeline profile — generates dhat-heap.json for viewer
 #[test]
 fn profile_full_pipeline() {
-    let path = fixture_path("bn_short_mid_10000.fastq")
-        .expect("run: cargo run --example generate_fixtures --release -- --size bench");
+    let Some(path) = fixture_path("bn_short_mid_10000.fastq") else {
+        eprintln!("skip: run cargo run --example generate_fixtures --release -- --size bench");
+        return;
+    };
 
     let _prof = dhat::Profiler::new_heap();
 
