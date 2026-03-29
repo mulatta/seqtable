@@ -66,17 +66,17 @@ impl DualSeqCounts {
 
     /// Insert or increment a sequence count. Packs ACGT-only ≤160bp sequences.
     #[inline]
-    pub fn insert(&mut self, seq: std::borrow::Cow<'_, [u8]>) {
-        if let Some(key) = pack_dna(seq.as_ref()) {
+    pub fn insert(&mut self, seq: &[u8]) {
+        if let Some(key) = pack_dna(seq) {
             if let Some(count) = self.packed.get_mut(&key) {
                 *count += 1;
             } else {
                 self.packed.insert(key, 1);
             }
-        } else if let Some(count) = self.long.get_mut(seq.as_ref()) {
+        } else if let Some(count) = self.long.get_mut(seq) {
             *count += 1;
         } else {
-            self.long.insert(seq.into_owned(), 1);
+            self.long.insert(seq.to_vec(), 1);
         }
     }
 }
@@ -243,7 +243,7 @@ pub fn count_sequences(
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
         total_records += 1;
-        local.insert(record.seq());
+        local.insert(&record.seq());
         chunk_count += 1;
 
         #[cfg(feature = "cli")]
@@ -337,7 +337,7 @@ fn count_from_reader(
 
     while let Some(record) = reader.next() {
         let record = record.context("Failed to read record")?;
-        counts.insert(record.seq());
+        counts.insert(&record.seq());
         total_records += 1;
     }
 
