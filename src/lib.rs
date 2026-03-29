@@ -1,10 +1,11 @@
+#[cfg(feature = "cli")]
 pub mod output;
 
+#[cfg(feature = "cli")]
 pub use output::{OutputFormat, SequenceData, SequenceRecord};
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use std::path::Path;
 
@@ -212,13 +213,17 @@ pub fn count_sequences(
     let mut reader = parse_fastx_file(file_path)
         .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
 
-    let file_size = std::fs::metadata(file_path)?.len();
-    let estimated_records = (file_size / 100).max(1000);
+    #[cfg(feature = "cli")]
+    let estimated_records = {
+        let file_size = std::fs::metadata(file_path)?.len();
+        (file_size / 100).max(1000)
+    };
 
+    #[cfg(feature = "cli")]
     let progress = if show_progress {
-        let pb = ProgressBar::new(estimated_records);
+        let pb = indicatif::ProgressBar::new(estimated_records);
         pb.set_style(
-            ProgressStyle::default_bar()
+            indicatif::ProgressStyle::default_bar()
                 .template("      {msg:<10} [{bar:30}] {pos}/{len}")
                 .unwrap()
                 .progress_chars("=> "),
@@ -241,6 +246,7 @@ pub fn count_sequences(
         local.insert(record.seq());
         chunk_count += 1;
 
+        #[cfg(feature = "cli")]
         if let Some(ref pb) = progress
             && total_records & 0x3FFF == 0
         {
@@ -260,8 +266,10 @@ pub fn count_sequences(
         partial_long.push(local.long);
     }
 
+    #[cfg(feature = "cli")]
     let num_chunks = partial_packed.len();
 
+    #[cfg(feature = "cli")]
     if let Some(ref pb) = progress {
         pb.set_position(total_records);
         pb.set_message("merging");
@@ -270,6 +278,7 @@ pub fn count_sequences(
     let final_packed = merge_count_maps(partial_packed);
     let final_long = merge_count_maps(partial_long);
 
+    #[cfg(feature = "cli")]
     if let Some(pb) = progress {
         pb.finish_and_clear();
         eprintln!(
@@ -339,6 +348,7 @@ fn count_from_reader(
     Ok((counts, total_records))
 }
 
+#[cfg(feature = "cli")]
 pub fn prepare_records(counts: DualSeqCounts) -> Vec<SequenceRecord> {
     let total_unique = counts.packed.len() + counts.long.len();
     let mut records: Vec<SequenceRecord> = Vec::with_capacity(total_unique);

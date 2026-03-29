@@ -3,27 +3,45 @@ name = "seqtable"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["cli"]
+cli = [
+  "dep:clap",
+  "dep:indicatif",
+  "dep:console",
+  "dep:arrow",
+  "dep:parquet",
+  "dep:csv",
+]
+
 [dependencies]
 needletail = "0.5"
 rayon = "1.8"
-arrow = "53.0"
-parquet = "53.0"
 flate2 = { version = "1.0", default-features = false, features = ["zlib-ng"] }
 ahash = "0.8"
-clap = { version = "4.5", features = ["derive"] }
-indicatif = "0.17"
 anyhow = "1.0"
-console = "0.15"
-csv = "1.4.0"
+
+# CLI/output-only dependencies
+clap = { version = "4.5", features = ["derive"], optional = true }
+indicatif = { version = "0.17", optional = true }
+console = { version = "0.15", optional = true }
+arrow = { version = "53.0", optional = true }
+parquet = { version = "53.0", optional = true }
+csv = { version = "1.4.0", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.8", features = ["html_reports"] }
 dhat = "0.3"
 
+[[bin]]
+name = "seqtable"
+required-features = ["cli"]
+
 [[bench]]
 name = "seqtable_bench"
 harness = false
+required-features = ["cli"]
 
 [profile.dev]
 opt-level = 1
