@@ -54,7 +54,7 @@ fn bench_fixtures_gz() -> Vec<Fixture> {
 }
 
 fn load_records_from_fixture(path: &Path) -> Vec<SequenceRecord> {
-    let (counts, total) = count_sequences_sequential(path, false).unwrap();
+    let (counts, _total) = count_sequences_sequential(path, false).unwrap();
     prepare_records(counts)
 }
 
