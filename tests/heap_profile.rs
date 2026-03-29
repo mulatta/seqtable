@@ -1,3 +1,4 @@
+#![cfg(feature = "cli")]
 //! Heap profiling with dhat.
 //!
 //! Run:   cargo test --test heap_profile --profile profiling -- --nocapture --test-threads=1
