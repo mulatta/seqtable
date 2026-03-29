@@ -35,5 +35,13 @@
 
       default = self'.packages.seqtable;
     };
+
+    checks = {
+      clippy = craneLib.cargoClippy (commonArgs
+        // {
+          inherit cargoArtifacts;
+          cargoClippyExtraArgs = "--all-targets --all-features -- -D warnings";
+        });
+    };
   };
 }
